@@ -1,0 +1,529 @@
+esphome:
+  name: ddsu666-emulator
+  build_flags:
+    - -DCONFIG_ARDUINO_ISR_IRAM
+    - -Wno-empty-body
+  on_boot:
+    priority: 800
+    then:
+      - lambda: |-
+          id(emu_import_kwh).publish_state(1250.50);
+          id(emu_export_kwh).publish_state(340.20);
+          id(emu_voltage).publish_state(230.0);
+          id(emu_current).publish_state(5.0);
+          id(emu_active_power).publish_state(1.15);
+          id(emu_reactive_power).publish_state(0.0);
+          id(emu_apparent_power).publish_state(1.15);
+          id(emu_pf).publish_state(1.0);
+          id(emu_freq).publish_state(50.0);
+          id(emu_pv_import_kwh).publish_state(0.0);
+          id(emu_pv_export_kwh).publish_state(0.0);
+          id(emu_pv_voltage).publish_state(230.0);
+          id(emu_pv_current).publish_state(0.0);
+          id(emu_pv_active_power).publish_state(0.0);
+          id(emu_pv_reactive_power).publish_state(0.0);
+          id(emu_pv_apparent_power).publish_state(0.0);
+          id(emu_pv_pf).publish_state(1.0);
+          id(emu_pv_freq).publish_state(50.0);
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+  level: INFO
+  logs:
+    mqtt.component: WARN
+    mqtt.sensor: WARN
+
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: "Europe/Lisbon"
+
+globals:
+  - id: mqtt_grid_watchdog
+    type: int
+    initial_value: '0'
+  - id: mqtt_pv_watchdog
+    type: int
+    initial_value: '0'
+
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          id(mqtt_grid_watchdog) += 1;
+          id(mqtt_pv_watchdog) += 1;
+          if (id(mqtt_grid_watchdog) > 30) {
+            id(emu_active_power).publish_state(0.0);
+            id(emu_apparent_power).publish_state(0.0);
+            id(emu_reactive_power).publish_state(0.0);
+            id(emu_current).publish_state(0.0);
+            id(mqtt_grid_watchdog) = 35;
+          }
+          if (id(mqtt_pv_watchdog) > 30) {
+            id(emu_pv_active_power).publish_state(0.0);
+            id(emu_pv_apparent_power).publish_state(0.0);
+            id(emu_pv_reactive_power).publish_state(0.0);
+            id(emu_pv_current).publish_state(0.0);
+            id(mqtt_pv_watchdog) = 35;
+          }
+
+# --- Wi-Fi Configuration ---
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  fast_connect: true
+  reboot_timeout: 15min
+
+  # Optional fallback hotspot if it fails to connect to the primary Wi-Fi
+  ap:
+    ssid: "DDSU666-Emulator-Fallback"
+    password: ""
+
+# Enables captive portal to manage Wi-Fi if connection fails
+captive_portal:
+
+# Standard ESPHome Over-The-Air updates
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+# Built-in Web Server interface
+mqtt:
+  broker: 10.0.0.4
+  port: 1883
+  client_id: "ddsu666-emulator"
+
+  on_message:
+    # ----------------------------------------------------
+    # UPDATE THIS TOPIC TO MATCH YOUR OPENDTU POWER TOPIC!
+    # Example: "solar/dtu/power" or "solar/11223344/0/power"
+    # ----------------------------------------------------
+    - topic: "solar/ac/power"
+      then:
+        - lambda: |-
+            id(mqtt_pv_watchdog) = 0; // Reset PV watchdog
+            float p = atof(x.c_str());
+            id(emu_pv_active_power).publish_state(p / 1000.0); // Convert W to kW
+            
+            // Auto-calculate apparent power, current, and PF realistically
+            id(emu_pv_voltage).publish_state(230.0);
+            id(emu_pv_apparent_power).publish_state(p / 1000.0); // Assume PF=1.0 for solar
+            id(emu_pv_reactive_power).publish_state(0.0);
+            id(emu_pv_pf).publish_state(1.0);
+            id(emu_pv_current).publish_state(p / 230.0);
+            id(emu_pv_freq).publish_state(50.0);
+
+    # ----------------------------------------------------
+    # UPDATE THIS TOPIC TO MATCH YOUR OPENDTU ENERGY TOPIC!
+    # ----------------------------------------------------
+    - topic: "solar/ac/yieldtotal"
+      then:
+        - lambda: |-
+            float e = atof(x.c_str());
+            id(emu_pv_import_kwh).publish_state(e);
+
+  on_json_message:
+    - topic: "shelly-em/realtime"
+      then:
+        - lambda: |-
+            id(mqtt_grid_watchdog) = 0; // Reset Grid failsafe
+            
+            if (!x["v"].isNull()) {
+              id(emu_voltage).publish_state(x["v"]);
+            }
+            if (!x["c"].isNull()) {
+              id(emu_current).publish_state(x["c"]);
+            }
+            if (!x["p"].isNull()) {
+              float p = x["p"];
+              id(emu_active_power).publish_state((p / 1000.0) * -1.0); // INVERT SIGN FOR HOYMILES
+            }
+            if (!x["s"].isNull()) {
+              float s = x["s"];
+              id(emu_apparent_power).publish_state(s / 1000.0);
+              float p = id(emu_active_power).state;
+              if (s/1000.0 > p) {
+                id(emu_reactive_power).publish_state(sqrt(pow(s/1000.0, 2) - p*p));
+              } else {
+                id(emu_reactive_power).publish_state(0.0);
+              }
+            }
+            if (!x["pf"].isNull()) {
+              id(emu_pf).publish_state(x["pf"]);
+            }
+            if (!x["f"].isNull()) {
+              id(emu_freq).publish_state(x["f"]);
+            }
+            
+    - topic: "shelly-em/status/em1data:0"
+      then:
+        - lambda: |-
+            if (!x["total_act_energy"].isNull()) {
+              float e = x["total_act_energy"];
+              id(emu_import_kwh).publish_state(e / 1000.0); // Assuming Wh, convert to kWh
+            }
+            if (!x["total_act_ret_energy"].isNull()) {
+              float e = x["total_act_ret_energy"];
+              id(emu_export_kwh).publish_state(e / 1000.0);
+            }
+
+web_server:
+  port: 80
+  version: 2
+
+# Enable the RS485 chip by driving GPIO19 LOW (TTGO T-CAN485 specific)
+# Hardware Power & Transceiver Enables
+switch:
+  - platform: gpio
+    pin: GPIO19
+    id: rs485_chip_enable
+    restore_mode: ALWAYS_ON
+  
+  - platform: gpio
+    pin: GPIO16
+    id: rs485_5v_enable
+    restore_mode: ALWAYS_ON
+
+# Configure UART using T-CAN485 pin mappings
+uart:
+  - id: uart_modbus
+    tx_pin: GPIO22
+    rx_pin: GPIO21
+    baud_rate: 9600
+    stop_bits: 1
+
+# Configure Modbus with direction control (DE/RE on GPIO17)
+modbus:
+  - id: modbus_bus
+    uart_id: uart_modbus
+    flow_control_pin: GPIO17
+    role: server
+
+modbus_server:
+  # --- GRID METER EMULATOR ---
+  - id: modbus_srv_grid
+    modbus_id: modbus_bus
+    address: 2 # DDSU666 Modbus Slave ID (fixed for Hoymiles)
+    registers:
+      # --- System / Information Registers (16-bit Integer) ---
+      - address: 0x0001
+        value_type: U_WORD
+        read_lambda: return 504;
+
+      - address: 0x0002
+        value_type: U_WORD
+        read_lambda: return 0;
+
+      - address: 0x0003
+        value_type: U_WORD
+        read_lambda: return 166;
+
+      - address: 0x0004
+        value_type: U_WORD
+        read_lambda: return 5;
+
+      - address: 0x0005
+        value_type: U_WORD
+        read_lambda: return 5;
+
+      - address: 0x0006
+        value_type: U_WORD
+        read_lambda: return 3;
+
+      - address: 0x0007
+        value_type: U_WORD
+        read_lambda: return 10;
+
+      - address: 0x0008
+        value_type: U_WORD
+        read_lambda: return 1;
+
+      - address: 0x0009
+        value_type: U_WORD
+        read_lambda: return 5;
+
+      - address: 0x000A
+        value_type: U_WORD
+        read_lambda: return 0;
+
+      - address: 0x000B
+        value_type: U_WORD
+        read_lambda: return 166;
+
+      - address: 0x000C
+        value_type: U_WORD
+        read_lambda: return 3;
+
+      # --- Real-Time Measurement Registers (32-bit Float IEEE754) ---
+      - address: 0x2000
+        value_type: FP32
+        read_lambda: return id(emu_voltage).state;
+
+      - address: 0x2002
+        value_type: FP32
+        read_lambda: return id(emu_current).state;
+
+      - address: 0x2004
+        value_type: FP32
+        read_lambda: return id(emu_active_power).state;
+
+      - address: 0x2006
+        value_type: FP32
+        read_lambda: return id(emu_reactive_power).state;
+
+      - address: 0x2008
+        value_type: FP32
+        read_lambda: return id(emu_apparent_power).state;
+
+      - address: 0x200A
+        value_type: FP32
+        read_lambda: return id(emu_pf).state;
+
+      - address: 0x200E
+        value_type: FP32
+        read_lambda: return id(emu_freq).state;
+
+      # --- Total Energy Accumulator Registers ---
+      - address: 0x4000
+        value_type: FP32
+        read_lambda: return id(emu_import_kwh).state;
+
+      - address: 0x4002
+        value_type: FP32
+        read_lambda: return 0.0;
+
+      - address: 0x4004
+        value_type: FP32
+        read_lambda: return 0.0;
+
+      - address: 0x4006
+        value_type: FP32
+        read_lambda: return 0.0;
+
+      - address: 0x4008
+        value_type: FP32
+        read_lambda: return 0.0;
+
+      - address: 0x400A
+        value_type: FP32
+        read_lambda: return id(emu_export_kwh).state;
+
+  # --- PV METER EMULATOR ---
+  - id: modbus_srv_pv
+    modbus_id: modbus_bus
+    address: 1 # DDSU666 Modbus Slave ID for PV
+    registers:
+      - address: 0x0001
+        value_type: U_WORD
+        read_lambda: return 504;
+      - address: 0x0002
+        value_type: U_WORD
+        read_lambda: return 0;
+      - address: 0x0003
+        value_type: U_WORD
+        read_lambda: return 166;
+      - address: 0x0004
+        value_type: U_WORD
+        read_lambda: return 5;
+      - address: 0x0005
+        value_type: U_WORD
+        read_lambda: return 5;
+      - address: 0x0006
+        value_type: U_WORD
+        read_lambda: return 3;
+      - address: 0x0007
+        value_type: U_WORD
+        read_lambda: return 10;
+      - address: 0x0008
+        value_type: U_WORD
+        read_lambda: return 1;
+      - address: 0x0009
+        value_type: U_WORD
+        read_lambda: return 5;
+      - address: 0x000A
+        value_type: U_WORD
+        read_lambda: return 0;
+      - address: 0x000B
+        value_type: U_WORD
+        read_lambda: return 166;
+      - address: 0x000C
+        value_type: U_WORD
+        read_lambda: return 3;
+
+      - address: 0x2000
+        value_type: FP32
+        read_lambda: return id(emu_pv_voltage).state;
+      - address: 0x2002
+        value_type: FP32
+        read_lambda: return id(emu_pv_current).state;
+      - address: 0x2004
+        value_type: FP32
+        read_lambda: return id(emu_pv_active_power).state;
+      - address: 0x2006
+        value_type: FP32
+        read_lambda: return id(emu_pv_reactive_power).state;
+      - address: 0x2008
+        value_type: FP32
+        read_lambda: return id(emu_pv_apparent_power).state;
+      - address: 0x200A
+        value_type: FP32
+        read_lambda: return id(emu_pv_pf).state;
+      - address: 0x200E
+        value_type: FP32
+        read_lambda: return id(emu_pv_freq).state;
+
+      - address: 0x4000
+        value_type: FP32
+        read_lambda: return id(emu_pv_import_kwh).state;
+      - address: 0x4002
+        value_type: FP32
+        read_lambda: return 0.0;
+      - address: 0x4004
+        value_type: FP32
+        read_lambda: return 0.0;
+      - address: 0x4006
+        value_type: FP32
+        read_lambda: return 0.0;
+      - address: 0x4008
+        value_type: FP32
+        read_lambda: return 0.0;
+      - address: 0x400A
+        value_type: FP32
+        read_lambda: return id(emu_pv_export_kwh).state;
+
+# Entities exposed on Home Assistant and Web Interface
+sensor:
+  - platform: template
+    internal: false
+    id: emu_pv_voltage
+    name: "PV Voltage"
+    unit_of_measurement: "V"
+    accuracy_decimals: 1
+
+  - platform: template
+    internal: false
+    id: emu_pv_current
+    name: "PV Current"
+    unit_of_measurement: "A"
+    accuracy_decimals: 2
+
+  - platform: template
+    internal: false
+    id: emu_pv_active_power
+    name: "PV Active Power"
+    unit_of_measurement: "kW"
+    accuracy_decimals: 3
+
+  - platform: template
+    internal: false
+    id: emu_pv_reactive_power
+    name: "PV Reactive Power"
+    unit_of_measurement: "kVAR"
+    accuracy_decimals: 3
+
+  - platform: template
+    internal: false
+    id: emu_pv_apparent_power
+    name: "PV Apparent Power"
+    unit_of_measurement: "kVA"
+    accuracy_decimals: 3
+
+  - platform: template
+    internal: false
+    id: emu_pv_pf
+    name: "PV Power Factor"
+    accuracy_decimals: 2
+
+  - platform: template
+    internal: false
+    id: emu_pv_freq
+    name: "PV Frequency"
+    unit_of_measurement: "Hz"
+    accuracy_decimals: 2
+
+  - platform: template
+    internal: false
+    id: emu_pv_import_kwh
+    name: "PV Energy Import"
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 2
+
+  - platform: template
+    internal: false
+    id: emu_pv_export_kwh
+    name: "PV Energy Export"
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 2
+
+
+  - platform: template
+    internal: false
+    id: emu_voltage
+    name: "Voltage"
+    unit_of_measurement: "V"
+    accuracy_decimals: 1
+
+  - platform: template
+    internal: false
+    id: emu_current
+    name: "Current"
+    unit_of_measurement: "A"
+    accuracy_decimals: 2
+
+  - platform: template
+    internal: false
+    id: emu_active_power
+    name: "Active Power"
+    unit_of_measurement: "kW"
+    accuracy_decimals: 3
+
+  - platform: template
+    internal: false
+    id: emu_reactive_power
+    name: "Reactive Power"
+    unit_of_measurement: "kVAR"
+    accuracy_decimals: 3
+
+  - platform: template
+    internal: false
+    id: emu_apparent_power
+    name: "Apparent Power"
+    unit_of_measurement: "kVA"
+    accuracy_decimals: 3
+
+  - platform: template
+    internal: false
+    id: emu_pf
+    name: "Power Factor"
+    accuracy_decimals: 2
+
+  - platform: template
+    internal: false
+    id: emu_freq
+    name: "Frequency"
+    unit_of_measurement: "Hz"
+    accuracy_decimals: 2
+
+  - platform: template
+    internal: false
+    id: emu_import_kwh
+    name: "Energy Import"
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 2
+
+  - platform: template
+    internal: false
+    id: emu_export_kwh
+    name: "Energy Export"
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 2
+
+
+api:
+  encryption:
+    key: "MQP9KwqjErvqiyMONOR505iyRihUl/yR1C5fUxj5nK8="
+

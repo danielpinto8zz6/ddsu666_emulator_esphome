@@ -1,0 +1,20 @@
+# ESPHome build directory
+.esphome/
+
+# Python virtual environment
+.venv/
+venv/
+env/
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# secrets file
+secrets.yaml
