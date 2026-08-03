@@ -7,13 +7,15 @@ esphome:
     priority: 800
     then:
       - lambda: |-
-          id(emu_import_kwh).publish_state(1250.50);
-          id(emu_export_kwh).publish_state(340.20);
+          // Safe boot defaults: zero power so inverter doesn't charge battery
+          // Energy counters keep last known values (will be updated via MQTT)
+          id(emu_import_kwh).publish_state(0.0);
+          id(emu_export_kwh).publish_state(0.0);
           id(emu_voltage).publish_state(230.0);
-          id(emu_current).publish_state(5.0);
-          id(emu_active_power).publish_state(1.15);
+          id(emu_current).publish_state(0.0);
+          id(emu_active_power).publish_state(0.0);
           id(emu_reactive_power).publish_state(0.0);
-          id(emu_apparent_power).publish_state(1.15);
+          id(emu_apparent_power).publish_state(0.0);
           id(emu_pf).publish_state(1.0);
           id(emu_freq).publish_state(50.0);
           id(emu_pv_import_kwh).publish_state(0.0);
@@ -56,20 +58,39 @@ interval:
       - lambda: |-
           id(mqtt_grid_watchdog) += 1;
           id(mqtt_pv_watchdog) += 1;
-          if (id(mqtt_grid_watchdog) > 30) {
-            id(emu_active_power).publish_state(0.0);
-            id(emu_apparent_power).publish_state(0.0);
-            id(emu_reactive_power).publish_state(0.0);
-            id(emu_current).publish_state(0.0);
-            id(mqtt_grid_watchdog) = 35;
+          // Reduced from 30s to 10s for faster failsafe response
+          if (id(mqtt_grid_watchdog) > 10) {
+            ESP_LOGW("failsafe", "Grid MQTT timeout! Disabling RS485 to force Hoymiles safe state.");
+            id(rs485_5v_enable).turn_off();
+            id(rs485_chip_enable).turn_off();
+            id(mqtt_grid_watchdog) = 15;
           }
-          if (id(mqtt_pv_watchdog) > 30) {
+          if (id(mqtt_pv_watchdog) > 10) {
             id(emu_pv_active_power).publish_state(0.0);
             id(emu_pv_apparent_power).publish_state(0.0);
             id(emu_pv_reactive_power).publish_state(0.0);
             id(emu_pv_current).publish_state(0.0);
-            id(mqtt_pv_watchdog) = 35;
+            id(mqtt_pv_watchdog) = 15;
           }
+
+  # Lightweight MQTT health check (replaces web_server)
+  - interval: 30s
+    then:
+      - lambda: |-
+          char buf[128];
+          int rssi = 0;
+          if (wifi::global_wifi_component->is_connected()) {
+            rssi = wifi::global_wifi_component->wifi_rssi();
+          }
+          snprintf(buf, sizeof(buf),
+            "{\"uptime\":%lu,\"heap\":%u,\"rssi\":%d,\"grid_wd\":%d,\"pv_wd\":%d}",
+            (unsigned long)(millis() / 1000),
+            (unsigned int)esp_get_free_heap_size(),
+            rssi,
+            id(mqtt_grid_watchdog),
+            id(mqtt_pv_watchdog)
+          );
+          id(mqtt_bus).publish("ddsu666-emulator/status", buf);
 
 # --- Wi-Fi Configuration ---
 wifi:
@@ -78,24 +99,53 @@ wifi:
   fast_connect: true
   reboot_timeout: 15min
 
+  on_disconnect:
+    then:
+      - lambda: |-
+          ESP_LOGW("wifi", "WiFi disconnected! Disabling RS485 to force Hoymiles safe state.");
+          // Cut power to the RS485 chip so the inverter detects a 'Meter Lost' alarm
+          // This prevents the PID loop from freezing at its current discharge rate
+          id(rs485_5v_enable).turn_off();
+          id(rs485_chip_enable).turn_off();
+          // PV can safely report 0
+          id(emu_pv_active_power).publish_state(0.0);
+          id(emu_pv_apparent_power).publish_state(0.0);
+          id(emu_pv_reactive_power).publish_state(0.0);
+          id(emu_pv_current).publish_state(0.0);
+          // Force watchdogs into timeout state
+          id(mqtt_grid_watchdog) = 15;
+          id(mqtt_pv_watchdog) = 15;
+
   # Optional fallback hotspot if it fails to connect to the primary Wi-Fi
   ap:
     ssid: "DDSU666-Emulator-Fallback"
     password: ""
 
-# Enables captive portal to manage Wi-Fi if connection fails
-captive_portal:
+# captive_portal removed — not useful on a headless Modbus bridge, saves RAM
 
 # Standard ESPHome Over-The-Air updates
 ota:
   - platform: esphome
     password: !secret ota_password
 
-# Built-in Web Server interface
 mqtt:
+  id: mqtt_bus
   broker: 10.0.0.4
   port: 1883
   client_id: "ddsu666-emulator"
+
+  on_disconnect:
+    then:
+      - lambda: |-
+          ESP_LOGW("mqtt", "MQTT disconnected! Disabling RS485 to force Hoymiles safe state.");
+          id(rs485_5v_enable).turn_off();
+          id(rs485_chip_enable).turn_off();
+          id(emu_pv_active_power).publish_state(0.0);
+          id(emu_pv_apparent_power).publish_state(0.0);
+          id(emu_pv_reactive_power).publish_state(0.0);
+          id(emu_pv_current).publish_state(0.0);
+          id(mqtt_grid_watchdog) = 15;
+          id(mqtt_pv_watchdog) = 15;
 
   on_message:
     # ----------------------------------------------------
@@ -105,13 +155,16 @@ mqtt:
     - topic: "solar/ac/power"
       then:
         - lambda: |-
-            id(mqtt_pv_watchdog) = 0; // Reset PV watchdog
             float p = atof(x.c_str());
-            id(emu_pv_active_power).publish_state(p / 1000.0); // Convert W to kW
-            
-            // Auto-calculate apparent power, current, and PF realistically
+            // Sanity check: reject garbage values (PV can't exceed 10 kW)
+            if (isnan(p) || p < 0.0 || p > 10000.0) {
+              ESP_LOGW("pv", "Rejected bad PV power value: %f", p);
+              return;
+            }
+            id(mqtt_pv_watchdog) = 0; // Reset PV watchdog only on valid data
+            id(emu_pv_active_power).publish_state(p / 1000.0);
             id(emu_pv_voltage).publish_state(230.0);
-            id(emu_pv_apparent_power).publish_state(p / 1000.0); // Assume PF=1.0 for solar
+            id(emu_pv_apparent_power).publish_state(p / 1000.0);
             id(emu_pv_reactive_power).publish_state(0.0);
             id(emu_pv_pf).publish_state(1.0);
             id(emu_pv_current).publish_state(p / 230.0);
@@ -124,39 +177,67 @@ mqtt:
       then:
         - lambda: |-
             float e = atof(x.c_str());
-            id(emu_pv_import_kwh).publish_state(e);
+            if (!isnan(e) && e >= 0.0) {
+              id(emu_pv_import_kwh).publish_state(e);
+            }
 
   on_json_message:
     - topic: "shelly-em/realtime"
       then:
         - lambda: |-
-            id(mqtt_grid_watchdog) = 0; // Reset Grid failsafe
-            
+            // Validate voltage first — if it's garbage, reject the entire message
             if (!x["v"].isNull()) {
-              id(emu_voltage).publish_state(x["v"]);
+              float v = x["v"];
+              if (isnan(v) || v < 180.0 || v > 280.0) {
+                ESP_LOGW("grid", "Rejected bad voltage: %f — skipping entire message", v);
+                return;
+              }
+              id(emu_voltage).publish_state(v);
             }
+            id(mqtt_grid_watchdog) = 0; // Reset only after validation
+            if (!id(rs485_5v_enable).state) {
+              id(rs485_5v_enable).turn_on();
+              id(rs485_chip_enable).turn_on();
+            }
+            
             if (!x["c"].isNull()) {
-              id(emu_current).publish_state(x["c"]);
+              float c = x["c"];
+              if (!isnan(c) && c >= 0.0 && c < 250.0) {
+                id(emu_current).publish_state(c);
+              }
             }
             if (!x["p"].isNull()) {
               float p = x["p"];
-              id(emu_active_power).publish_state((p / 1000.0) * -1.0); // INVERT SIGN FOR HOYMILES
+              // Grid power can be -15kW to +15kW (import/export)
+              if (!isnan(p) && p > -15000.0 && p < 15000.0) {
+                id(emu_active_power).publish_state((p / 1000.0) * -1.0); // INVERT SIGN FOR HOYMILES
+              }
             }
             if (!x["s"].isNull()) {
               float s = x["s"];
-              id(emu_apparent_power).publish_state(s / 1000.0);
-              float p = id(emu_active_power).state;
-              if (s/1000.0 > p) {
-                id(emu_reactive_power).publish_state(sqrt(pow(s/1000.0, 2) - p*p));
-              } else {
-                id(emu_reactive_power).publish_state(0.0);
+              if (!isnan(s) && s >= 0.0 && s < 15000.0) {
+                id(emu_apparent_power).publish_state(s / 1000.0);
+                float p_abs = fabs(id(emu_active_power).state);
+                float s_kw = s / 1000.0;
+                // NaN-safe reactive power: only sqrt if s > p (avoid negative under root)
+                if (s_kw > p_abs) {
+                  id(emu_reactive_power).publish_state(sqrt(s_kw * s_kw - p_abs * p_abs));
+                } else {
+                  id(emu_reactive_power).publish_state(0.0);
+                }
               }
             }
             if (!x["pf"].isNull()) {
-              id(emu_pf).publish_state(x["pf"]);
+              float pf = x["pf"];
+              if (!isnan(pf) && pf >= -1.0 && pf <= 1.0) {
+                id(emu_pf).publish_state(pf);
+              }
             }
             if (!x["f"].isNull()) {
-              id(emu_freq).publish_state(x["f"]);
+              float f = x["f"];
+              if (!isnan(f) && f > 45.0 && f < 55.0) {
+                id(emu_freq).publish_state(f);
+              }
             }
             
     - topic: "shelly-em/status/em1data:0"
@@ -171,9 +252,8 @@ mqtt:
               id(emu_export_kwh).publish_state(e / 1000.0);
             }
 
-web_server:
-  port: 80
-  version: 2
+# web_server removed to save RAM (~40-50KB)
+# Health check is now via MQTT topic: ddsu666-emulator/status (every 30s)
 
 # Enable the RS485 chip by driving GPIO19 LOW (TTGO T-CAN485 specific)
 # Hardware Power & Transceiver Enables
@@ -521,9 +601,4 @@ sensor:
     name: "Energy Export"
     unit_of_measurement: "kWh"
     accuracy_decimals: 2
-
-
-api:
-  encryption:
-    key: "MQP9KwqjErvqiyMONOR505iyRihUl/yR1C5fUxj5nK8="
 
