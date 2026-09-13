@@ -18,3 +18,9 @@ Thumbs.db
 
 # secrets file
 secrets.yaml
+include/secrets.h
+secrets.h
+
+# PlatformIO build directory
+.pio/
+

@@ -4,8 +4,8 @@ This project uses an ESP32 (LILYGO T-CAN485) to emulate two independent CHINT DD
 
 ## Architecture
 
-- **Slave ID 2 (Grid Meter)**: Emulates the main house Grid meter using data published by a Shelly Pro EM 50A over MQTT.
-- **Slave ID 1 (PV Meter)**: Emulates a PV string meter using data published by an OpenDTU-onBattery system over MQTT.
+- **Slave ID 2 (Grid Meter)**: Emulates the main house Grid meter using direct peer-to-peer **WebSockets** (`ws://10.0.0.187/rpc`) with the Shelly Pro EM 50A.
+- **Slave ID 1 (PV Meter)**: Emulates a PV string meter using data published by an OpenDTU-onBattery system over **MQTT**.
 
 ## Fast-Polling Configuration (Zero-Export Stability)
 
@@ -55,6 +55,51 @@ The ESP32 also subscribes to the Shelly's native `em1data:0` topic. This topic p
 **Note**: In your Shelly MQTT Settings, ensure `"Generic status update over MQTT"` is CHECKED so the energy counters are published. You can safely UNCHECK `"RPC status notifications over MQTT"` to save bandwidth.
 
 ## Hardware Setup
-- **Board**: LILYGO T-CAN485 (ESP32-C3)
-- **RS485 TX/RX**: Handled by internal hardware serial.
-- **RS485 Enable Pin**: GPIO19 is permanently driven LOW (`ALWAYS_ON`) to activate the onboard RS485 transceiver.
+- **Board**: LILYGO T-CAN485 (ESP32) or Waveshare ESP32-S3 RS485
+- **RS485 TX/RX**: Handled by internal hardware serial on Core 1
+- **RS485 Enable Pin**: Automatic hardware flow control and failsafe power cut
+
+## Native C++ Firmware (PlatformIO)
+
+This repository includes a high-performance native C++ implementation designed to replace ESPHome when sub-millisecond Modbus RTU response times are required for zero-export PID loops.
+
+### Key Benefits
+* **Dual-Core Isolation**: Core 1 handles RS485 Modbus RTU polling with zero jitter; Core 0 handles Wi-Fi, MQTT, and OTA.
+* **Low Footprint**: ~750KB Flash / ~15% RAM usage.
+* **Instant Failsafe**: Drops RS485 bus power when Grid MQTT times out (>10s) or Wi-Fi drops, immediately forcing Hoymiles to safe idle.
+
+### Configuration
+1. Copy `include/secrets.h.example` to `include/secrets.h` if not already present.
+2. Edit `include/secrets.h` with your Wi-Fi SSID, password, and MQTT broker IP.
+
+### Build & Flash
+
+Activate the virtual environment containing PlatformIO (or use your global `pio`):
+```bash
+source .venv/bin/activate
+```
+
+**Build firmware:**
+```bash
+# For LilyGO T-CAN485
+pio run -e lilygo-t-can485
+
+# For Waveshare ESP32-S3
+pio run -e waveshare-esp32-s3
+```
+
+**Upload via USB:**
+```bash
+pio run -e lilygo-t-can485 -t upload
+```
+
+**Serial Monitor:**
+```bash
+pio device monitor -b 115200
+```
+
+**Over-The-Air (OTA) Flash:**
+Once flashed with the C++ firmware, future updates can be pushed over Wi-Fi:
+```bash
+pio run -e lilygo-t-can485 -t upload --upload-port <ESP32_IP_ADDRESS>
+```

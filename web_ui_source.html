@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DDSU666 Modbus Emulator</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: rgba(19, 27, 46, 0.7);
+      --border: rgba(255, 255, 255, 0.08);
+      --text: #f8fafc;
+      --text-dim: #94a3b8;
+      --accent: #38bdf8;
+      --emerald: #10b981;
+      --amber: #f59e0b;
+      --rose: #f43f5e;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+    body { background: var(--bg); color: var(--text); padding: 20px; max-width: 960px; margin: 0 auto; min-height: 100vh; }
+    header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 24px; }
+    .badge { padding: 4px 12px; border-radius: 9999px; font-weight: 600; font-size: 0.85rem; }
+    .badge-ok { background: rgba(16, 185, 129, 0.2); color: var(--emerald); border: 1px solid var(--emerald); }
+    .badge-warn { background: rgba(245, 158, 11, 0.2); color: var(--amber); border: 1px solid var(--amber); }
+    .badge-err { background: rgba(244, 63, 94, 0.2); color: var(--rose); border: 1px solid var(--rose); }
+    .badge-accent { background: rgba(56, 189, 248, 0.2); color: var(--accent); border: 1px solid var(--accent); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px; backdrop-filter: blur(8px); }
+    .card-title { font-size: 0.85rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+    .val { font-size: 2rem; font-weight: 700; color: #fff; }
+    .val-sub { font-size: 0.9rem; color: var(--text-dim); margin-top: 4px; }
+    .status-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+    .status-row:last-child { border-bottom: none; }
+    .btn { background: #0284c7; color: #fff; padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
+    .btn:hover { background: #0369a1; }
+    input[type=file] { color: var(--text-dim); font-size: 0.85rem; }
+    footer { text-align: center; color: var(--text-dim); font-size: 0.8rem; margin-top: 32px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1 style="font-size: 1.4rem;">DDSU666 Modbus Emulator</h1>
+      <p style="color: var(--text-dim); font-size: 0.85rem;">Zero-Export Real-Time Energy Bridge</p>
+    </div>
+    <div id="sys-status" class="badge badge-ok">HEALTHY</div>
+  </header>
+
+  <div class="grid">
+    <div class="card">
+      <div class="card-title">⚡ Grid Active Power</div>
+      <div class="val" id="grid-w">-- W</div>
+      <div class="val-sub" id="grid-dir">Status: --</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">☀️ PV Solar Power</div>
+      <div class="val" id="pv-w">-- W</div>
+      <div class="val-sub" id="pv-yield">Yield: -- kWh</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">🔌 Grid Electricals</div>
+      <div class="status-row"><span>Voltage</span><strong id="grid-v">-- V</strong></div>
+      <div class="status-row"><span>Current</span><strong id="grid-c">-- A</strong></div>
+      <div class="status-row"><span>Power Factor</span><strong id="grid-pf">--</strong></div>
+      <div class="status-row"><span>Frequency</span><strong id="grid-f">-- Hz</strong></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">📊 Energy Accumulators</div>
+      <div class="status-row"><span>Total Import</span><strong id="grid-imp">-- kWh</strong></div>
+      <div class="status-row"><span>Total Export</span><strong id="grid-exp">-- kWh</strong></div>
+      <div class="status-row"><span>NVS Storage</span><strong style="color: var(--emerald);">Active</strong></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom: 24px;">
+    <div class="card-title">🩺 System Diagnostics & Links</div>
+    <div class="status-row"><span>Active Grid Source</span><span id="grid-source-badge" class="badge">--</span></div>
+    <div class="status-row"><span>ESP-NOW Link (Lolin C3)</span><span id="espnow-badge" class="badge">--</span></div>
+    <div class="status-row"><span>ESP-NOW Radio Signal</span><span id="espnow-signal">--</span></div>
+    <div class="status-row"><span>Shelly Pro EM (WebSocket)</span><span id="shelly-ws-badge" class="badge">--</span></div>
+    <div class="status-row"><span>OpenDTU (MQTT)</span><span id="mqtt-badge" class="badge">--</span></div>
+    <div class="status-row"><span>Hoymiles Inverter Link</span><span id="inverter-link-badge" class="badge">--</span></div>
+    <div class="status-row"><span>Inverter Queries Answered</span><strong id="modbus-queries">--</strong></div>
+    <div class="status-row"><span>RS485 Transceiver</span><span id="rs485-badge" class="badge">--</span></div>
+    <div class="status-row"><span>Wi-Fi Signal & IP</span><span id="wifi-info">--</span></div>
+    <div class="status-row"><span>Uptime & Heap</span><span id="uptime-heap">--</span></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">📦 Wireless Web OTA Update</div>
+    <div style="display: flex; gap: 12px; align-items: center; margin-top: 12px; flex-wrap: wrap;">
+      <input type="file" id="bin-file" accept=".bin">
+      <button class="btn" id="upload-btn" onclick="uploadFirmware()">Upload & Flash</button>
+      <span id="upload-status" style="font-size: 0.85rem; color: var(--text-dim);"></span>
+    </div>
+  </div>
+
+  <footer>
+    Auto-refreshing &bull; Health API: <a href="/health" style="color: var(--accent);">/health</a>
+  </footer>
+
+  <script>
+    async function update() {
+      try {
+        const res = await fetch("/health");
+        const d = await res.json();
+        
+        const badge = document.getElementById("sys-status");
+        badge.innerText = d.status;
+        badge.className = "badge " + (d.status === "HEALTHY" ? "badge-ok" : (d.status === "DEGRADED" ? "badge-warn" : "badge-err"));
+
+        const gw = d.grid.watts;
+        document.getElementById("grid-w").innerText = Math.abs(gw).toFixed(1) + " W";
+        if (gw > 5.0) {
+          document.getElementById("grid-dir").innerText = "↓ Importing from Grid";
+          document.getElementById("grid-dir").style.color = "var(--amber)";
+        } else if (gw < -5.0) {
+          document.getElementById("grid-dir").innerText = "↑ Exporting to Grid";
+          document.getElementById("grid-dir").style.color = "var(--emerald)";
+        } else {
+          document.getElementById("grid-dir").innerText = "⚡ Balanced (Zero Export)";
+          document.getElementById("grid-dir").style.color = "var(--accent)";
+        }
+
+        document.getElementById("pv-w").innerText = d.pv.watts.toFixed(1) + " W";
+        document.getElementById("pv-yield").innerText = "Total Yield: " + d.pv.yield_kwh.toFixed(2) + " kWh";
+
+        document.getElementById("grid-v").innerText = d.grid.volts.toFixed(1) + " V";
+        document.getElementById("grid-c").innerText = d.grid.amps.toFixed(2) + " A";
+        document.getElementById("grid-pf").innerText = d.grid.pf.toFixed(2);
+        document.getElementById("grid-f").innerText = d.grid.freq.toFixed(1) + " Hz";
+
+        document.getElementById("grid-imp").innerText = d.grid.import_kwh.toFixed(2) + " kWh";
+        document.getElementById("grid-exp").innerText = d.grid.export_kwh.toFixed(2) + " kWh";
+
+        const srcBadge = document.getElementById("grid-source-badge");
+        if (d.grid && d.grid.source === "ESPNOW") {
+          srcBadge.innerText = "⚡ ESP-NOW (Lolin Direct)";
+          srcBadge.className = "badge badge-accent";
+        } else if (d.grid && d.grid.source === "SHELLY_WS") {
+          srcBadge.innerText = "🌐 Shelly WS (Fallback)";
+          srcBadge.className = "badge badge-warn";
+        } else {
+          srcBadge.innerText = "NONE";
+          srcBadge.className = "badge badge-err";
+        }
+
+        const sBadge = document.getElementById("shelly-ws-badge");
+        if (d.grid && d.grid.source === "ESPNOW") {
+          sBadge.innerText = d.shelly.ws_connected ? "STANDBY (Fallback Ready)" : "DISCONNECTED";
+        } else {
+          sBadge.innerText = d.shelly.ws_connected ? "ACTIVE (10.0.0.187)" : "DISCONNECTED";
+        }
+        sBadge.className = "badge " + (d.shelly.ws_connected ? "badge-ok" : "badge-err");
+
+        const enBadge = document.getElementById("espnow-badge");
+        if (d.espnow && d.espnow.packets > 0 && d.espnow.age_sec >= 0 && d.espnow.age_sec < 5) {
+          const sig = (d.espnow.rssi && d.espnow.rssi !== 0) ? (" • " + d.espnow.rssi + " dBm") : "";
+          enBadge.innerText = "ONLINE (" + d.espnow.packets.toLocaleString() + " pkts" + sig + " • " + d.espnow.last_watts.toFixed(1) + " W)";
+          enBadge.className = "badge badge-ok";
+        } else if (d.espnow && d.espnow.packets > 0) {
+          enBadge.innerText = "STALE (" + d.espnow.age_sec.toFixed(0) + "s ago)";
+          enBadge.className = "badge badge-warn";
+        } else {
+          enBadge.innerText = "LISTENING (Channel " + (d.espnow ? d.espnow.channel : 1) + ")";
+          enBadge.className = "badge badge-warn";
+        }
+
+        const sigSpan = document.getElementById("espnow-signal");
+        if (d.espnow && d.espnow.rssi && d.espnow.rssi !== 0) {
+          let quality = "Excellent";
+          let col = "var(--emerald)";
+          if (d.espnow.rssi < -85) { quality = "Fair / Stable"; col = "var(--amber)"; }
+          else if (d.espnow.rssi < -75) { quality = "Good"; col = "var(--accent)"; }
+          sigSpan.innerHTML = "<strong style='color:" + col + "'>" + d.espnow.rssi + " dBm (" + quality + ")</strong>";
+        } else {
+          sigSpan.innerText = "--";
+        }
+
+        const mBadge = document.getElementById("mqtt-badge");
+        mBadge.innerText = d.opendtu.mqtt_connected ? "CONNECTED" : "DISCONNECTED";
+        mBadge.className = "badge " + (d.opendtu.mqtt_connected ? "badge-ok" : "badge-err");
+
+        const rBadge = document.getElementById("rs485-badge");
+        rBadge.innerText = d.modbus.rs485_active ? "ACTIVE (GPIO16/19 ON)" : "SAFE MODE (OFF)";
+        rBadge.className = "badge " + (d.modbus.rs485_active ? "badge-ok" : "badge-err");
+
+        const invBadge = document.getElementById("inverter-link-badge");
+        if (d.modbus && d.modbus.inverter_connected && d.modbus.rate_hz > 0) {
+          const ageStr = (d.modbus.age_sec >= 0) ? (d.modbus.age_sec < 0.1 ? "<0.1s" : d.modbus.age_sec.toFixed(1) + "s ago") : "<0.1s";
+          invBadge.innerText = "ACTIVE (" + d.modbus.rate_hz.toFixed(1) + " Hz • " + ageStr + ")";
+          invBadge.className = "badge badge-ok";
+        } else if (d.modbus && d.modbus.queries > 0) {
+          const ageStr = (d.modbus.age_sec >= 0) ? (d.modbus.age_sec.toFixed(0) + "s ago") : "--";
+          invBadge.innerText = "STALE (" + ageStr + ")";
+          invBadge.className = "badge badge-warn";
+        } else {
+          invBadge.innerText = "NO TRAFFIC (DISCONNECTED)";
+          invBadge.className = "badge badge-err";
+        }
+
+        const rateStr = (d.modbus && d.modbus.rate_hz > 0) ? (d.modbus.rate_hz.toFixed(1) + " Hz • ") : "";
+        document.getElementById("modbus-queries").innerText = d.modbus.queries.toLocaleString() + " (" + rateStr + d.modbus.crc_errors + " CRC err)";
+        document.getElementById("wifi-info").innerText = d.wifi.ip + " (" + d.wifi.rssi + " dBm)";
+        document.getElementById("uptime-heap").innerText = Math.floor(d.uptime_sec / 60) + " min • Free Heap: " + Math.floor(d.free_heap / 1024) + " KB";
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function uploadFirmware() {
+      const fileInput = document.getElementById("bin-file");
+      const status = document.getElementById("upload-status");
+      if (!fileInput.files.length) {
+        status.innerText = "Please select a .bin file first!";
+        status.style.color = "var(--rose)";
+        return;
+      }
+      const file = fileInput.files[0];
+      const formData = new FormData();
+      formData.append("file", file, file.name);
+      status.innerText = "Uploading... do not unplug";
+      status.style.color = "var(--amber)";
+
+      try {
+        const res = await fetch("/update", { method: "POST", body: formData });
+        if (res.ok) {
+          status.innerText = "Flash successful! Rebooting in 5s...";
+          status.style.color = "var(--emerald)";
+          setTimeout(() => location.reload(), 5000);
+        } else {
+          status.innerText = "Update failed!";
+          status.style.color = "var(--rose)";
+        }
+      } catch (err) {
+        status.innerText = "Flash successful! Device rebooting...";
+        status.style.color = "var(--emerald)";
+        setTimeout(() => location.reload(), 6000);
+      }
+    }
+
+    let timer = null;
+    function startTimer() {
+      if (!timer) timer = setInterval(update, 2000);
+    }
+    function stopTimer() {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    }
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) stopTimer();
+      else {
+        update();
+        startTimer();
+      }
+    });
+
+    update();
+    startTimer();
+  </script>
+</body>
+</html>

@@ -1,9 +1,8 @@
 esphome:
-  name: ddsu666-emulator
+  name: ddsu666-emulator-waveshare
   build_flags:
     - -DCONFIG_ARDUINO_ISR_IRAM
     - -Wno-empty-body
-    - -Wno-unused-function
   on_boot:
     priority: 800
     then:
@@ -30,15 +29,15 @@ esphome:
           id(emu_pv_freq).publish_state(50.0);
 
 esp32:
-  board: esp32dev
+  board: esp32-s3-devkitc-1
   framework:
     type: arduino
 
 logger:
-  level: ERROR
+  level: INFO
   logs:
-    mqtt.component: ERROR
-    mqtt.sensor: ERROR
+    mqtt.component: WARN
+    mqtt.sensor: WARN
 
 time:
   - platform: sntp
@@ -52,6 +51,9 @@ globals:
   - id: mqtt_pv_watchdog
     type: int
     initial_value: '0'
+  - id: rs485_enabled
+    type: bool
+    initial_value: 'true'
 
 interval:
   - interval: 1s
@@ -62,8 +64,9 @@ interval:
           // Reduced from 30s to 10s for faster failsafe response
           if (id(mqtt_grid_watchdog) > 10) {
             ESP_LOGW("failsafe", "Grid MQTT timeout! Disabling RS485 to force Hoymiles safe state.");
-            id(rs485_5v_enable).turn_off();
-            id(rs485_chip_enable).turn_off();
+            id(rs485_enabled) = false;
+            id(modbus_srv_grid).set_address(99);
+            id(modbus_srv_pv).set_address(99);
             id(mqtt_grid_watchdog) = 15;
           }
           if (id(mqtt_pv_watchdog) > 10) {
@@ -74,16 +77,20 @@ interval:
             id(mqtt_pv_watchdog) = 15;
           }
 
-  # Lightweight MQTT health check (WiFi signal + RS485 status)
+  # Lightweight MQTT health check (replaces web_server)
   - interval: 30s
     then:
       - lambda: |-
-          char buf[64];
+          char buf[128];
           int rssi = 0;
           if (wifi::global_wifi_component->is_connected()) {
             rssi = wifi::global_wifi_component->wifi_rssi();
           }
-          snprintf(buf, sizeof(buf), "{\"rssi\":%d,\"rs485\":%s}", rssi, id(rs485_chip_enable).state ? "true" : "false");
+          snprintf(buf, sizeof(buf),
+            "{\"rssi\":%d,\"rs485_status\":%s}",
+            rssi,
+            id(rs485_enabled) ? "true" : "false"
+          );
           id(mqtt_bus).publish("ddsu666-emulator/status", buf);
 
 # --- Wi-Fi Configuration ---
@@ -97,10 +104,11 @@ wifi:
     then:
       - lambda: |-
           ESP_LOGW("wifi", "WiFi disconnected! Disabling RS485 to force Hoymiles safe state.");
-          // Cut power to the RS485 chip so the inverter detects a 'Meter Lost' alarm
+          // Change Modbus address to simulate a hardware disconnection ('Meter Lost' alarm)
           // This prevents the PID loop from freezing at its current discharge rate
-          id(rs485_5v_enable).turn_off();
-          id(rs485_chip_enable).turn_off();
+          id(rs485_enabled) = false;
+          id(modbus_srv_grid).set_address(99);
+          id(modbus_srv_pv).set_address(99);
           // PV can safely report 0
           id(emu_pv_active_power).publish_state(0.0);
           id(emu_pv_apparent_power).publish_state(0.0);
@@ -110,7 +118,10 @@ wifi:
           id(mqtt_grid_watchdog) = 15;
           id(mqtt_pv_watchdog) = 15;
 
-  # Optional fallback hotspot removed to save resources
+  # Optional fallback hotspot if it fails to connect to the primary Wi-Fi
+  ap:
+    ssid: "DDSU666-Emulator-Fallback"
+    password: ""
 
 # captive_portal removed — not useful on a headless Modbus bridge, saves RAM
 
@@ -121,17 +132,17 @@ ota:
 
 mqtt:
   id: mqtt_bus
-  broker: 10.0.0.1
+  broker: 10.0.0.4
   port: 1883
   client_id: "ddsu666-emulator"
-  discovery: false
 
   on_disconnect:
     then:
       - lambda: |-
           ESP_LOGW("mqtt", "MQTT disconnected! Disabling RS485 to force Hoymiles safe state.");
-          id(rs485_5v_enable).turn_off();
-          id(rs485_chip_enable).turn_off();
+          id(rs485_enabled) = false;
+          id(modbus_srv_grid).set_address(99);
+          id(modbus_srv_pv).set_address(99);
           id(emu_pv_active_power).publish_state(0.0);
           id(emu_pv_apparent_power).publish_state(0.0);
           id(emu_pv_reactive_power).publish_state(0.0);
@@ -187,9 +198,11 @@ mqtt:
               id(emu_voltage).publish_state(v);
             }
             id(mqtt_grid_watchdog) = 0; // Reset only after validation
-            if (!id(rs485_5v_enable).state) {
-              id(rs485_5v_enable).turn_on();
-              id(rs485_chip_enable).turn_on();
+            if (!id(rs485_enabled)) {
+              ESP_LOGI("failsafe", "Grid data received! Re-enabling RS485 responses.");
+              id(rs485_enabled) = true;
+              id(modbus_srv_grid).set_address(2);
+              id(modbus_srv_pv).set_address(1);
             }
             
             if (!x["c"].isNull()) {
@@ -244,32 +257,30 @@ mqtt:
               id(emu_export_kwh).publish_state(e / 1000.0);
             }
 
-# Enable the RS485 chip by driving GPIO19 LOW (TTGO T-CAN485 specific)
-# Hardware Power & Transceiver Enables
-switch:
-  - platform: gpio
-    pin: GPIO19
-    id: rs485_chip_enable
-    restore_mode: ALWAYS_ON
-  
-  - platform: gpio
-    pin: GPIO16
-    id: rs485_5v_enable
-    restore_mode: ALWAYS_ON
+# Local web server for the dashboard
+web_server:
+  port: 80
+  version: 2
 
-# Configure UART using T-CAN485 pin mappings
+# ESPHome Native API for Home Assistant and ESPHome Dashboard connection
+api:
+
+# Note: Waveshare ESP32-S3-RS485-CAN has fixed power, no hardware enable pins.
+# Failsafe logic now modifies the Modbus address to simulate a hardware fault.
+
+# Configure UART using Waveshare ESP32-S3-RS485-CAN pin mappings
 uart:
   - id: uart_modbus
-    tx_pin: GPIO22
-    rx_pin: GPIO21
+    tx_pin: GPIO17
+    rx_pin: GPIO18
     baud_rate: 9600
     stop_bits: 1
 
-# Configure Modbus with direction control (DE/RE on GPIO17)
+# Configure Modbus with direction control on GPIO21
 modbus:
   - id: modbus_bus
     uart_id: uart_modbus
-    flow_control_pin: GPIO17
+    flow_control_pin: GPIO21
     role: server
 
 modbus_server:
@@ -464,65 +475,72 @@ modbus_server:
         value_type: FP32
         read_lambda: return id(emu_pv_export_kwh).state;
 
-# Entities kept internal to save resources and avoid Home Assistant exposure
+# Entities exposed on Home Assistant and Web Interface
 sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 60s
+
+  - platform: uptime
+    name: "Uptime"
+
   - platform: template
-    internal: true
+    internal: false
     id: emu_pv_voltage
     name: "PV Voltage"
     unit_of_measurement: "V"
     accuracy_decimals: 1
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_pv_current
     name: "PV Current"
     unit_of_measurement: "A"
     accuracy_decimals: 2
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_pv_active_power
     name: "PV Active Power"
     unit_of_measurement: "kW"
     accuracy_decimals: 3
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_pv_reactive_power
     name: "PV Reactive Power"
     unit_of_measurement: "kVAR"
     accuracy_decimals: 3
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_pv_apparent_power
     name: "PV Apparent Power"
     unit_of_measurement: "kVA"
     accuracy_decimals: 3
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_pv_pf
     name: "PV Power Factor"
     accuracy_decimals: 2
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_pv_freq
     name: "PV Frequency"
     unit_of_measurement: "Hz"
     accuracy_decimals: 2
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_pv_import_kwh
     name: "PV Energy Import"
     unit_of_measurement: "kWh"
     accuracy_decimals: 2
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_pv_export_kwh
     name: "PV Energy Export"
     unit_of_measurement: "kWh"
@@ -530,64 +548,71 @@ sensor:
 
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_voltage
     name: "Voltage"
     unit_of_measurement: "V"
     accuracy_decimals: 1
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_current
     name: "Current"
     unit_of_measurement: "A"
     accuracy_decimals: 2
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_active_power
     name: "Active Power"
     unit_of_measurement: "kW"
     accuracy_decimals: 3
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_reactive_power
     name: "Reactive Power"
     unit_of_measurement: "kVAR"
     accuracy_decimals: 3
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_apparent_power
     name: "Apparent Power"
     unit_of_measurement: "kVA"
     accuracy_decimals: 3
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_pf
     name: "Power Factor"
     accuracy_decimals: 2
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_freq
     name: "Frequency"
     unit_of_measurement: "Hz"
     accuracy_decimals: 2
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_import_kwh
     name: "Energy Import"
     unit_of_measurement: "kWh"
     accuracy_decimals: 2
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_export_kwh
     name: "Energy Export"
     unit_of_measurement: "kWh"
     accuracy_decimals: 2
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+    ssid:
+      name: "Connected SSID"
 

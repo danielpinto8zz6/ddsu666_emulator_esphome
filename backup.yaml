@@ -3,7 +3,6 @@ esphome:
   build_flags:
     - -DCONFIG_ARDUINO_ISR_IRAM
     - -Wno-empty-body
-    - -Wno-unused-function
   on_boot:
     priority: 800
     then:
@@ -35,10 +34,10 @@ esp32:
     type: arduino
 
 logger:
-  level: ERROR
+  level: INFO
   logs:
-    mqtt.component: ERROR
-    mqtt.sensor: ERROR
+    mqtt.component: WARN
+    mqtt.sensor: WARN
 
 time:
   - platform: sntp
@@ -74,16 +73,20 @@ interval:
             id(mqtt_pv_watchdog) = 15;
           }
 
-  # Lightweight MQTT health check (WiFi signal + RS485 status)
+  # Lightweight MQTT health check (replaces web_server)
   - interval: 30s
     then:
       - lambda: |-
-          char buf[64];
+          char buf[128];
           int rssi = 0;
           if (wifi::global_wifi_component->is_connected()) {
             rssi = wifi::global_wifi_component->wifi_rssi();
           }
-          snprintf(buf, sizeof(buf), "{\"rssi\":%d,\"rs485\":%s}", rssi, id(rs485_chip_enable).state ? "true" : "false");
+          snprintf(buf, sizeof(buf),
+            "{\"rssi\":%d,\"rs485_status\":%s}",
+            rssi,
+            id(rs485_chip_enable).state ? "true" : "false"
+          );
           id(mqtt_bus).publish("ddsu666-emulator/status", buf);
 
 # --- Wi-Fi Configuration ---
@@ -110,7 +113,10 @@ wifi:
           id(mqtt_grid_watchdog) = 15;
           id(mqtt_pv_watchdog) = 15;
 
-  # Optional fallback hotspot removed to save resources
+  # Optional fallback hotspot if it fails to connect to the primary Wi-Fi
+  ap:
+    ssid: "DDSU666-Emulator-Fallback"
+    password: ""
 
 # captive_portal removed — not useful on a headless Modbus bridge, saves RAM
 
@@ -124,7 +130,6 @@ mqtt:
   broker: 10.0.0.1
   port: 1883
   client_id: "ddsu666-emulator"
-  discovery: false
 
   on_disconnect:
     then:
@@ -243,6 +248,11 @@ mqtt:
               float e = x["total_act_ret_energy"];
               id(emu_export_kwh).publish_state(e / 1000.0);
             }
+
+# Web server for local status monitoring
+web_server:
+  port: 80
+  local: true
 
 # Enable the RS485 chip by driving GPIO19 LOW (TTGO T-CAN485 specific)
 # Hardware Power & Transceiver Enables
@@ -464,65 +474,65 @@ modbus_server:
         value_type: FP32
         read_lambda: return id(emu_pv_export_kwh).state;
 
-# Entities kept internal to save resources and avoid Home Assistant exposure
+# Entities exposed on Home Assistant and Web Interface
 sensor:
   - platform: template
-    internal: true
+    internal: false
     id: emu_pv_voltage
     name: "PV Voltage"
     unit_of_measurement: "V"
     accuracy_decimals: 1
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_pv_current
     name: "PV Current"
     unit_of_measurement: "A"
     accuracy_decimals: 2
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_pv_active_power
     name: "PV Active Power"
     unit_of_measurement: "kW"
     accuracy_decimals: 3
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_pv_reactive_power
     name: "PV Reactive Power"
     unit_of_measurement: "kVAR"
     accuracy_decimals: 3
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_pv_apparent_power
     name: "PV Apparent Power"
     unit_of_measurement: "kVA"
     accuracy_decimals: 3
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_pv_pf
     name: "PV Power Factor"
     accuracy_decimals: 2
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_pv_freq
     name: "PV Frequency"
     unit_of_measurement: "Hz"
     accuracy_decimals: 2
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_pv_import_kwh
     name: "PV Energy Import"
     unit_of_measurement: "kWh"
     accuracy_decimals: 2
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_pv_export_kwh
     name: "PV Energy Export"
     unit_of_measurement: "kWh"
@@ -530,62 +540,62 @@ sensor:
 
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_voltage
     name: "Voltage"
     unit_of_measurement: "V"
     accuracy_decimals: 1
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_current
     name: "Current"
     unit_of_measurement: "A"
     accuracy_decimals: 2
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_active_power
     name: "Active Power"
     unit_of_measurement: "kW"
     accuracy_decimals: 3
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_reactive_power
     name: "Reactive Power"
     unit_of_measurement: "kVAR"
     accuracy_decimals: 3
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_apparent_power
     name: "Apparent Power"
     unit_of_measurement: "kVA"
     accuracy_decimals: 3
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_pf
     name: "Power Factor"
     accuracy_decimals: 2
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_freq
     name: "Frequency"
     unit_of_measurement: "Hz"
     accuracy_decimals: 2
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_import_kwh
     name: "Energy Import"
     unit_of_measurement: "kWh"
     accuracy_decimals: 2
 
   - platform: template
-    internal: true
+    internal: false
     id: emu_export_kwh
     name: "Energy Export"
     unit_of_measurement: "kWh"
