@@ -152,7 +152,7 @@
         if (d.grid && d.grid.source === "ESPNOW") {
           sBadge.innerText = d.shelly.ws_connected ? "STANDBY (Fallback Ready)" : "DISCONNECTED";
         } else {
-          sBadge.innerText = d.shelly.ws_connected ? "ACTIVE (10.0.0.187)" : "DISCONNECTED";
+          sBadge.innerText = d.shelly.ws_connected ? ("ACTIVE (" + (d.shelly.ip || "Connected") + ")") : "DISCONNECTED";
         }
         sBadge.className = "badge " + (d.shelly.ws_connected ? "badge-ok" : "badge-err");
 

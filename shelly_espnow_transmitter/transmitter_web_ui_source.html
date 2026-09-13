@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ESP32-C3 - Shelly to ESP-NOW Bridge</title>
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --card: #131b2e;
+      --border: #1f2b48;
+      --text: #e2e8f0;
+      --dim: #94a3b8;
+      --cyan: #06b6d4;
+      --emerald: #10b981;
+      --amber: #f59e0b;
+      --rose: #f43f5e;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+    body { background: var(--bg); color: var(--text); padding: 16px; max-width: 900px; margin: 0 auto; min-height: 100vh; }
+    header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 12px; margin-bottom: 20px; }
+    .badge { padding: 4px 10px; border-radius: 9999px; font-size: 0.8rem; font-weight: 700; }
+    .ok { background: rgba(16, 185, 129, 0.2); color: var(--emerald); border: 1px solid var(--emerald); }
+    .warn { background: rgba(245, 158, 11, 0.2); color: var(--amber); border: 1px solid var(--amber); }
+    .err { background: rgba(244, 63, 94, 0.2); color: var(--rose); border: 1px solid var(--rose); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin-bottom: 20px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+    .title { font-size: 0.8rem; color: var(--dim); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+    .val { font-size: 2rem; font-weight: 700; color: #fff; }
+    .sub { font-size: 0.85rem; color: var(--dim); margin-top: 2px; }
+    .row { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.05); font-size: 0.9rem; }
+    .row:last-child { border-bottom: none; }
+    .btn { background: #0284c7; color: #fff; padding: 8px 14px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
+    .btn:hover { background: #0369a1; }
+    footer { text-align: center; color: var(--dim); font-size: 0.8rem; margin-top: 24px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h2 id="header-device">⚡ ESP32-C3 Bridge</h2>
+      <p style="color:var(--dim);font-size:0.85rem">Shelly Pro EM WebSocket &rarr; ESP-NOW Link</p>
+    </div>
+    <div id="status-badge" class="badge ok">HEALTHY</div>
+  </header>
+
+  <div class="grid">
+    <div class="card">
+      <div class="title">⚡ Live Grid Power</div>
+      <div class="val" id="power-w">-- W</div>
+      <div class="sub" id="power-dir">Status: --</div>
+    </div>
+
+    <div class="card">
+      <div class="title">📡 ESP-NOW Link</div>
+      <div class="row"><span>Transmission Mode</span><strong id="target-mode" style="color:var(--cyan)">--</strong></div>
+      <div class="row"><span>Target MAC</span><strong id="target-mac">--</strong></div>
+      <div class="row"><span>802.11 ACK Rate</span><strong id="ack-rate" style="color:var(--emerald)">--%</strong></div>
+      <div class="row"><span>Packets Sent</span><strong id="sent-count">--</strong></div>
+      <div class="row"><span>NACK / Failures</span><strong id="fail-count">--</strong></div>
+    </div>
+
+    <div class="card">
+      <div class="title" id="shelly-card-title">🔌 Shelly Pro EM</div>
+      <div class="row"><span>WebSocket Link</span><span id="ws-badge" class="badge">--</span></div>
+      <div class="row"><span>Voltage / Current</span><strong id="volts-amps">-- V / -- A</strong></div>
+      <div class="row"><span>Power Factor / Freq</span><strong id="pf-freq">-- / -- Hz</strong></div>
+      <div class="row"><span>Total Energy</span><strong id="energy">-- kWh</strong></div>
+    </div>
+
+    <div class="card">
+      <div class="title">🩺 Device & Network Diagnostics</div>
+      <div class="row"><span>Wi-Fi IP & RSSI</span><span id="wifi-info">--</span></div>
+      <div class="row"><span>Radio Channel</span><strong id="channel-info" style="color:var(--cyan)">--</strong></div>
+      <div class="row"><span>Uptime & Heap</span><span id="uptime-heap">--</span></div>
+      <div class="row"><span>Telemetries Age</span><span id="age-info">--</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="title">📦 Wireless Web OTA Update</div>
+    <div style="display:flex;gap:12px;align-items:center;margin-top:10px;flex-wrap:wrap">
+      <input type="file" id="bin-file" accept=".bin" style="color:var(--dim);font-size:0.85rem">
+      <button class="btn" onclick="uploadFirmware()">Upload &amp; Flash</button>
+      <span id="upload-status" style="font-size:0.85rem;color:var(--dim)"></span>
+    </div>
+  </div>
+
+  <footer>
+    Health API: <a href="/health" style="color:var(--cyan)">/health</a> &bull; Auto-refreshing
+  </footer>
+
+  <script>
+    async function update() {
+      try {
+        const r = await fetch("/health");
+        const d = await r.json();
+
+        if (d.device) {
+          document.getElementById("header-device").innerText = "⚡ " + d.device;
+        }
+
+        const b = document.getElementById("status-badge");
+        b.innerText = d.status;
+        b.className = "badge " + (d.status === "HEALTHY" ? "ok" : (d.status === "DEGRADED" ? "warn" : "err"));
+
+        const w = d.shelly.watts;
+        document.getElementById("power-w").innerText = Math.abs(w).toFixed(1) + " W";
+        const dir = document.getElementById("power-dir");
+        if (w > 5.0) {
+          dir.innerText = "↓ Importing from Grid";
+          dir.style.color = "var(--amber)";
+        } else if (w < -5.0) {
+          dir.innerText = "↑ Exporting to Grid";
+          dir.style.color = "var(--emerald)";
+        } else {
+          dir.innerText = "⚡ Balanced";
+          dir.style.color = "var(--cyan)";
+        }
+
+        const isBroadcast = d.espnow.mode === "BROADCAST" || d.espnow.target_mac === "FF:FF:FF:FF:FF:FF";
+        document.getElementById("target-mode").innerText = isBroadcast ? "Broadcast (All Peers)" : "Unicast (Target Peer)";
+        document.getElementById("target-mac").innerText = isBroadcast ? "FF:FF:FF:FF:FF:FF (Broadcast)" : d.espnow.target_mac;
+
+        document.getElementById("ack-rate").innerText = isBroadcast ? "N/A (Broadcast)" : (d.espnow.ack_rate_pct.toFixed(1) + "%");
+        document.getElementById("sent-count").innerText = d.espnow.sent.toLocaleString() + " pkts";
+        document.getElementById("fail-count").innerText = d.espnow.fail;
+        if (d.espnow.fail > 0) document.getElementById("fail-count").style.color = "var(--rose)";
+
+        const wb = document.getElementById("ws-badge");
+        wb.innerText = d.shelly.connected ? "CONNECTED" : "DISCONNECTED";
+        wb.className = "badge " + (d.shelly.connected ? "ok" : "err");
+
+        if (d.shelly.ip) {
+          document.getElementById("shelly-card-title").innerText = "🔌 Shelly Pro EM (" + d.shelly.ip + ")";
+        }
+
+        document.getElementById("volts-amps").innerText = d.shelly.volts.toFixed(1) + " V / " + d.shelly.amps.toFixed(2) + " A";
+        document.getElementById("pf-freq").innerText = d.shelly.pf.toFixed(2) + " / " + d.shelly.freq.toFixed(1) + " Hz";
+        document.getElementById("energy").innerText = (d.shelly.energy_kwh >= 0 ? d.shelly.energy_kwh.toFixed(2) : "--") + " kWh";
+
+        document.getElementById("wifi-info").innerText = d.wifi.ip + " (" + d.wifi.rssi + " dBm)";
+        document.getElementById("channel-info").innerText = "Channel " + d.wifi.channel + " (ESP-NOW Locked)";
+        document.getElementById("uptime-heap").innerText = Math.floor(d.uptime_sec / 60) + " min • " + (d.free_heap / 1024).toFixed(0) + " KB free";
+        document.getElementById("age-info").innerText = "Shelly: " + d.shelly.age_sec.toFixed(1) + "s • ESP-NOW: " + d.espnow.age_sec.toFixed(1) + "s";
+      } catch(e) {}
+    }
+
+    async function uploadFirmware() {
+      const f = document.getElementById("bin-file");
+      const s = document.getElementById("upload-status");
+      if (!f.files.length) {
+        s.innerText = "Select .bin file!";
+        s.style.color = "var(--rose)";
+        return;
+      }
+      const fd = new FormData();
+      fd.append("file", f.files[0], f.files[0].name);
+      s.innerText = "Uploading... do not unplug";
+      s.style.color = "var(--amber)";
+      try {
+        const res = await fetch("/update", { method: "POST", body: fd });
+        if (res.ok) {
+          s.innerText = "Success! Rebooting...";
+          s.style.color = "var(--emerald)";
+          setTimeout(() => location.reload(), 5000);
+        } else {
+          s.innerText = "Upload failed!";
+          s.style.color = "var(--rose)";
+        }
+      } catch(e) {
+        s.innerText = "Rebooting...";
+        s.style.color = "var(--emerald)";
+        setTimeout(() => location.reload(), 6000);
+      }
+    }
+
+    let tmr = null;
+    function start() { if (!tmr) tmr = setInterval(update, 1500); }
+    function stop() { if (tmr) { clearInterval(tmr); tmr = null; } }
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) stop();
+      else { update(); start(); }
+    });
+    update();
+    start();
+  </script>
+</body>
+</html>

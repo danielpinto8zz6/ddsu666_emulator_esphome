@@ -2,6 +2,10 @@
 
 #include <Arduino.h>
 
+#if __has_include("secrets.h")
+#include "secrets.h"
+#endif
+
 // Hardware Pinout Definitions
 #ifndef STATUS_LED_PIN
 #define STATUS_LED_PIN        8       // ESP32-C3 SuperMini onboard blue LED (Active LOW)
@@ -10,11 +14,17 @@
 // Wi-Fi Credentials
 // IMPORTANT: The ESP32-C3 MUST connect to the same Wi-Fi network as the Lilygo
 // so both ESP32 radios automatically lock onto the exact same Wi-Fi channel!
+#ifndef WIFI_SSID
 #define WIFI_SSID             "AccessPoint"
+#endif
+#ifndef WIFI_PASSWORD
 #define WIFI_PASSWORD         "65809240"
+#endif
 
 // Shelly Pro EM Configuration
+#ifndef SHELLY_IP
 #define SHELLY_IP             "10.0.0.187"
+#endif
 #define SHELLY_WS_PORT        80
 #define SHELLY_WS_PATH        "/rpc"
 #define SHELLY_POLL_MS        200     // 200ms ultra-fast polling for zero-export control

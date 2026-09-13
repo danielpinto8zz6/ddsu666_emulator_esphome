@@ -2,6 +2,10 @@
 
 #include <Arduino.h>
 
+#if __has_include("secrets.h")
+#include "secrets.h"
+#endif
+
 // ================================================================
 // BOARD PINOUT DEFINITIONS
 // ================================================================
@@ -36,7 +40,9 @@ constexpr uint8_t MODBUS_SLAVE_PV         = 1;  // Slave ID 1: PV Inverter Strin
 constexpr uint32_t WATCHDOG_TIMEOUT_SEC   = 10; // Fail-safe timeout in seconds (Grid & PV)
 
 // Shelly WebSocket Configuration
-constexpr const char* SHELLY_IP           = "10.0.0.187";
+#ifndef SHELLY_IP
+#define SHELLY_IP                         "10.0.0.187"
+#endif
 constexpr uint16_t SHELLY_WS_PORT         = 80;
 constexpr const char* SHELLY_WS_PATH      = "/rpc";
 constexpr uint32_t SHELLY_POLL_INTERVAL_MS= 200;   // 200ms ultra-fast polling for zero-export control

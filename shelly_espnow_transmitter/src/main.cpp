@@ -269,7 +269,7 @@ static void handleHealthJson() {
       "\"free_heap\":%lu,"
       "\"wifi\":{\"connected\":%s,\"ip\":\"%s\",\"rssi\":%d,\"channel\":%d},"
       "\"shelly\":{\"connected\":%s,\"ip\":\"%s\",\"age_sec\":%.1f,\"watts\":%.1f,\"volts\":%.1f,\"amps\":%.2f,\"pf\":%.2f,\"freq\":%.1f,\"energy_kwh\":%.2f},"
-      "\"espnow\":{\"target_mac\":\"%s\",\"channel\":%d,\"sent\":%lu,\"ack\":%lu,\"fail\":%lu,\"ack_rate_pct\":%.1f,\"age_sec\":%.1f}"
+      "\"espnow\":{\"mode\":\"%s\",\"target_mac\":\"%s\",\"channel\":%d,\"sent\":%lu,\"ack\":%lu,\"fail\":%lu,\"ack_rate_pct\":%.1f,\"age_sec\":%.1f}"
     "}",
     healthy ? "HEALTHY" : (s_shellyConnected ? "DEGRADED" : "OFFLINE"),
     (unsigned long)(millis() / 1000),
@@ -287,6 +287,7 @@ static void handleHealthJson() {
     s_lastPf,
     s_lastFreq,
     s_cachedEnergyKwh,
+    USE_BROADCAST ? "BROADCAST" : "UNICAST",
     targetMacStr,
     WiFi.channel(),
     (unsigned long)s_packetsSent,
