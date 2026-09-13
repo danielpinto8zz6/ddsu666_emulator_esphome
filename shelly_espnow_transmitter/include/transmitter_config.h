@@ -2,8 +2,13 @@
 
 #include <Arduino.h>
 
+// Hardware Pinout Definitions
+#ifndef STATUS_LED_PIN
+#define STATUS_LED_PIN        8       // ESP32-C3 SuperMini onboard blue LED (Active LOW)
+#endif
+
 // Wi-Fi Credentials
-// IMPORTANT: The Lolin C3 Mini MUST connect to the same Wi-Fi network as the Lilygo
+// IMPORTANT: The ESP32-C3 MUST connect to the same Wi-Fi network as the Lilygo
 // so both ESP32 radios automatically lock onto the exact same Wi-Fi channel!
 #define WIFI_SSID             "AccessPoint"
 #define WIFI_PASSWORD         "65809240"
@@ -12,7 +17,7 @@
 #define SHELLY_IP             "10.0.0.187"
 #define SHELLY_WS_PORT        80
 #define SHELLY_WS_PATH        "/rpc"
-#define SHELLY_POLL_MS        200     // 200ms polling for ultra-fast real-time telemetry (zero-export)
+#define SHELLY_POLL_MS        200     // 200ms ultra-fast polling for zero-export control
 #define SHELLY_ENERGY_POLL_MS 60000   // 60s polling for energy accumulators
 
 // Target Lilygo T-CAN485 ESP-NOW Configuration

@@ -8,16 +8,26 @@ EspNowStats ESPNowReceiver::s_stats = { false, 0, 0, {0}, "None", 0.0f, 0, 0 };
 portMUX_TYPE ESPNowReceiver::s_spinlock = portMUX_INITIALIZER_UNLOCKED;
 
 static volatile int8_t s_captured_rssi = 0;
+static volatile uint8_t s_tracked_mac[6] = {0};
 
 static void IRAM_ATTR promis_sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type) {
   if (type != WIFI_PKT_MGMT) return;
   const wifi_promiscuous_pkt_t *pkt = (const wifi_promiscuous_pkt_t *)buf;
   if (pkt->rx_ctrl.sig_len < 24) return;
   const uint8_t *payload = pkt->payload;
-  // Match Lolin MAC: 18:8B:0E:04:10:38 in Address 2 (bytes 10-15)
-  if (payload[10] == 0x18 && payload[11] == 0x8B && payload[12] == 0x0E &&
-      payload[13] == 0x04 && payload[14] == 0x10 && payload[15] == 0x38) {
-    s_captured_rssi = pkt->rx_ctrl.rssi;
+
+  // Match transmitter MAC dynamically once learned from valid packet
+  if (s_tracked_mac[0] != 0 || s_tracked_mac[1] != 0) {
+    if (payload[10] == s_tracked_mac[0] && payload[11] == s_tracked_mac[1] &&
+        payload[12] == s_tracked_mac[2] && payload[13] == s_tracked_mac[3] &&
+        payload[14] == s_tracked_mac[4] && payload[15] == s_tracked_mac[5]) {
+      s_captured_rssi = pkt->rx_ctrl.rssi;
+    }
+  } else {
+    // Fallback before first packet: capture 802.11 action frames (0xD0)
+    if (payload[0] == 0xD0) {
+      s_captured_rssi = pkt->rx_ctrl.rssi;
+    }
   }
 }
 
@@ -37,15 +47,6 @@ void ESPNowReceiver::begin() {
   esp_wifi_set_promiscuous_filter(&filter);
   esp_wifi_set_promiscuous_rx_cb(promis_sniffer_cb);
   esp_wifi_set_promiscuous(true);
-
-  // Register Lolin C3 peer so hardware PHY sends 802.11 ACKs back
-  static const uint8_t LOLIN_MAC[6] = { 0x18, 0x8B, 0x0E, 0x04, 0x10, 0x38 };
-  esp_now_peer_info_t lolinPeer = {};
-  memcpy(lolinPeer.peer_addr, LOLIN_MAC, 6);
-  lolinPeer.channel = 0;
-  lolinPeer.ifidx = WIFI_IF_STA;
-  lolinPeer.encrypt = false;
-  esp_now_add_peer(&lolinPeer);
 
   portENTER_CRITICAL(&s_spinlock);
   s_stats.initialized = true;
@@ -77,13 +78,22 @@ uint8_t ESPNowReceiver::getChannel() {
 void ESPNowReceiver::onDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
   if (data == nullptr || data_len <= 0) return;
 
-  if (mac_addr && !esp_now_is_peer_exist(mac_addr)) {
-    esp_now_peer_info_t peer = {};
-    memcpy(peer.peer_addr, mac_addr, 6);
-    peer.channel = 0;
-    peer.ifidx = WIFI_IF_STA;
-    peer.encrypt = false;
-    esp_now_add_peer(&peer);
+  if (mac_addr) {
+    s_tracked_mac[0] = mac_addr[0];
+    s_tracked_mac[1] = mac_addr[1];
+    s_tracked_mac[2] = mac_addr[2];
+    s_tracked_mac[3] = mac_addr[3];
+    s_tracked_mac[4] = mac_addr[4];
+    s_tracked_mac[5] = mac_addr[5];
+
+    if (!esp_now_is_peer_exist(mac_addr)) {
+      esp_now_peer_info_t peer = {};
+      memcpy(peer.peer_addr, mac_addr, 6);
+      peer.channel = 0;
+      peer.ifidx = WIFI_IF_STA;
+      peer.encrypt = false;
+      esp_now_add_peer(&peer);
+    }
   }
 
   float grid_watts = 0.0f;

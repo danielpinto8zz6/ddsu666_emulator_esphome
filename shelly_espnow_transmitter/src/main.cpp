@@ -36,6 +36,9 @@ static float s_cachedEnergyKwh = -1.0f;
 static uint32_t s_lastShellyMsgTime = 0;
 static uint32_t s_lastEspNowTxTime = 0;
 static char s_jsonBuffer[768];
+#ifdef STATUS_LED_PIN
+static uint32_t s_ledPulseTime = 0;
+#endif
 
 // ESP-NOW Send Callback (Reports 802.11 ACK status from receiver)
 static void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
@@ -96,6 +99,10 @@ static void transmitEspNow(float watts, float voltage, float current, float pf, 
   esp_err_t err = esp_now_send(s_targetMac, (const uint8_t *)&pkt, sizeof(pkt));
   s_packetsSent++;
   s_lastEspNowTxTime = millis();
+#ifdef STATUS_LED_PIN
+  digitalWrite(STATUS_LED_PIN, LOW); // Active LOW: Pulse LED ON on packet transmission
+  s_ledPulseTime = millis();
+#endif
 
   if (err != ESP_OK) {
     Serial.printf("[ESP-NOW] Send error code: %d\n", err);
@@ -103,8 +110,25 @@ static void transmitEspNow(float watts, float voltage, float current, float pf, 
 }
 
 static void handleShellyJson(const uint8_t *payload, size_t length) {
-  StaticJsonDocument<768> doc;
-  DeserializationError err = deserializeJson(doc, payload, length);
+  static StaticJsonDocument<256> filter;
+  static bool s_filterInit = false;
+  if (!s_filterInit) {
+    filter["result"]["em1:0"] = true;
+    filter["result"]["em1data:0"] = true;
+    filter["result"]["voltage"] = true;
+    filter["result"]["current"] = true;
+    filter["result"]["act_power"] = true;
+    filter["result"]["aprt_power"] = true;
+    filter["result"]["pf"] = true;
+    filter["result"]["freq"] = true;
+    filter["result"]["total_act_energy"] = true;
+    filter["params"]["em1:0"] = true;
+    filter["params"]["em1data:0"] = true;
+    s_filterInit = true;
+  }
+
+  StaticJsonDocument<512> doc;
+  DeserializationError err = deserializeJson(doc, payload, length, DeserializationOption::Filter(filter));
   if (err) return;
 
   JsonObject em1;
@@ -236,7 +260,11 @@ static void handleHealthJson() {
   snprintf(s_jsonBuffer, sizeof(s_jsonBuffer),
     "{"
       "\"status\":\"%s\","
-      "\"device\":\"LOLIN C3 Mini Bridge\","
+#if defined(BOARD_ESP32C3_SUPERMINI)
+      "\"device\":\"ESP32-C3 SuperMini Bridge\","
+#else
+      "\"device\":\"ESP32-C3 Transmitter Bridge\","
+#endif
       "\"uptime_sec\":%lu,"
       "\"free_heap\":%lu,"
       "\"wifi\":{\"connected\":%s,\"ip\":\"%s\",\"rssi\":%d,\"channel\":%d},"
@@ -318,9 +346,18 @@ void setup() {
   delay(1000);
 
   Serial.println("\n==================================================");
-  Serial.println(" LOLIN C3 Mini: Shelly WS -> ESP-NOW Bridge");
+#if defined(BOARD_ESP32C3_SUPERMINI)
+  Serial.println(" ESP32-C3 SuperMini: Shelly WS -> ESP-NOW Bridge");
+#else
+  Serial.println(" ESP32-C3: Shelly WS -> ESP-NOW Bridge");
+#endif
   Serial.println(" Direct Zero-Latency Bridge to Lilygo DDSU666");
   Serial.println("==================================================");
+
+#ifdef STATUS_LED_PIN
+  pinMode(STATUS_LED_PIN, OUTPUT);
+  digitalWrite(STATUS_LED_PIN, HIGH); // Initially OFF (Active LOW)
+#endif
 
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
@@ -331,9 +368,15 @@ void setup() {
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
   while (WiFi.status() != WL_CONNECTED) {
-    delay(250);
+    delay(200);
     Serial.print(".");
+#ifdef STATUS_LED_PIN
+    digitalWrite(STATUS_LED_PIN, !digitalRead(STATUS_LED_PIN)); // Blink during connection
+#endif
   }
+#ifdef STATUS_LED_PIN
+  digitalWrite(STATUS_LED_PIN, HIGH); // OFF once connected
+#endif
 
   Serial.println("\n[WiFi] Connected!");
   Serial.printf("[WiFi] IP Address: %s\n", WiFi.localIP().toString().c_str());
@@ -362,6 +405,13 @@ void loop() {
   s_wsClient.loop();
 
   uint32_t now = millis();
+
+#ifdef STATUS_LED_PIN
+  if (s_ledPulseTime != 0 && (now - s_ledPulseTime >= 20)) {
+    digitalWrite(STATUS_LED_PIN, HIGH); // Turn OFF after 20ms pulse
+    s_ledPulseTime = 0;
+  }
+#endif
 
   // Re-verify Wi-Fi connection
   if (WiFi.status() != WL_CONNECTED) {

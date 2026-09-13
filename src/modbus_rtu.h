@@ -39,7 +39,7 @@ private:
   float _queryRateHz;
 
   void processFrame(const uint8_t *frame, size_t length);
-  bool getRegisterValue(uint8_t slaveId, uint16_t regAddress, uint16_t &value);
+  bool getRegisterValue(uint8_t slaveId, uint16_t regAddress, const MeterTelemetry &telemetry, uint16_t &value) const;
   void sendResponse(const uint8_t *response, size_t length);
   void sendException(uint8_t slaveId, uint8_t functionCode, uint8_t exceptionCode);
 };

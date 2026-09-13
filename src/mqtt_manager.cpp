@@ -207,8 +207,26 @@ void MQTTManager::onWsEvent(WStype_t type, uint8_t *payload, size_t length) {
 }
 
 void MQTTManager::handleShellyMessage(const uint8_t *payload, size_t length) {
+  static StaticJsonDocument<256> filter;
+  static bool s_filterInit = false;
+  if (!s_filterInit) {
+    filter["result"]["em1:0"] = true;
+    filter["result"]["em1data:0"] = true;
+    filter["result"]["voltage"] = true;
+    filter["result"]["current"] = true;
+    filter["result"]["act_power"] = true;
+    filter["result"]["aprt_power"] = true;
+    filter["result"]["pf"] = true;
+    filter["result"]["freq"] = true;
+    filter["result"]["total_act_energy"] = true;
+    filter["result"]["total_act_ret_energy"] = true;
+    filter["params"]["em1:0"] = true;
+    filter["params"]["em1data:0"] = true;
+    s_filterInit = true;
+  }
+
   StaticJsonDocument<512> doc;
-  DeserializationError err = deserializeJson(doc, payload, length);
+  DeserializationError err = deserializeJson(doc, payload, length, DeserializationOption::Filter(filter));
   if (err) return;
 
   JsonObject em1;

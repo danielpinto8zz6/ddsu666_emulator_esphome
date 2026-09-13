@@ -2,8 +2,10 @@
 #include "mqtt_manager.h"
 #include "config.h"
 #include "web_ui_gz.h"
+#include <ArduinoJson.h>
 #include <Update.h>
 #include <esp_task_wdt.h>
+#include <cmath>
 
 #if ENABLE_ESPNOW
 #include "esp_now_receiver.h"
@@ -14,6 +16,9 @@ static WebServer s_server(80);
 static ModbusRTUServer *s_modbus = nullptr;
 static MQTTManager     *s_mqtt   = nullptr;
 static char s_jsonBuffer[1024];
+
+static inline float round1(float v) { return std::round(v * 10.0f) / 10.0f; }
+static inline float round2(float v) { return std::round(v * 100.0f) / 100.0f; }
 
 static void handleHealthJson() {
   MeterTelemetry grid = MeterState::getGrid();
@@ -48,61 +53,61 @@ static void handleHealthJson() {
   float modbusRate = s_modbus ? s_modbus->getQueryRateHz() : 0.0f;
   bool inverterConnected = s_modbus ? s_modbus->isInverterActive(2500) : false;
 
-  snprintf(s_jsonBuffer, sizeof(s_jsonBuffer),
-    "{"
-      "\"status\":\"%s\","
-      "\"uptime_sec\":%lu,"
-      "\"free_heap\":%lu,"
-      "\"wifi\":{\"connected\":%s,\"ip\":\"%s\",\"rssi\":%d},"
-#if ENABLE_ESPNOW
-      "\"espnow\":{\"enabled\":%s,\"channel\":%d,\"mac\":\"%s\",\"packets\":%lu,\"age_sec\":%.1f,\"last_sender\":\"%s\",\"last_watts\":%.1f,\"rssi\":%d},"
-#endif
-      "\"shelly\":{\"ws_connected\":%s,\"ip\":\"%s\",\"age_sec\":%.1f},"
-      "\"opendtu\":{\"mqtt_connected\":%s,\"age_sec\":%.1f},"
-      "\"modbus\":{\"rs485_active\":%s,\"queries\":%lu,\"crc_errors\":%lu,\"rate_hz\":%.1f,\"age_sec\":%.1f,\"inverter_connected\":%s},"
-      "\"grid\":{\"source\":\"%s\",\"watts\":%.1f,\"flow\":\"%s\",\"volts\":%.1f,\"amps\":%.2f,\"pf\":%.2f,\"freq\":%.1f,\"import_kwh\":%.2f,\"export_kwh\":%.2f},"
-      "\"pv\":{\"watts\":%.1f,\"yield_kwh\":%.2f}"
-    "}",
-    healthy ? "HEALTHY" : (s_modbus->isEnabled() ? "DEGRADED" : "FAILSAFE"),
-    (unsigned long)(millis() / 1000),
-    (unsigned long)ESP.getFreeHeap(),
-    s_mqtt->isWiFiConnected() ? "true" : "false",
-    WiFi.localIP().toString().c_str(),
-    WiFi.RSSI(),
-#if ENABLE_ESPNOW
-    en.initialized ? "true" : "false",
-    WiFi.channel(),
-    WiFi.macAddress().c_str(),
-    (unsigned long)en.packet_count,
-    enAge,
-    en.last_mac_str,
-    en.last_power_watts,
-    en.rssi,
-#endif
-    s_mqtt->isShellyWsConnected() ? "true" : "false",
-    SHELLY_IP,
-    gridAge,
-    s_mqtt->isMQTTConnected() ? "true" : "false",
-    pvAge,
-    s_modbus->isEnabled() ? "true" : "false",
-    (unsigned long)s_modbus->getQueryCount(),
-    (unsigned long)s_modbus->getCrcErrorCount(),
-    modbusRate,
-    modbusAge,
-    inverterConnected ? "true" : "false",
-    source,
-    gw,
-    flow,
-    grid.voltage,
-    grid.current,
-    grid.power_factor,
-    grid.frequency,
-    grid.import_kwh,
-    grid.export_kwh,
-    MeterState::getPvWatts(),
-    pv.import_kwh
-  );
+  StaticJsonDocument<1024> doc;
+  doc["status"] = healthy ? "HEALTHY" : (s_modbus->isEnabled() ? "DEGRADED" : "FAILSAFE");
+  doc["uptime_sec"] = (uint32_t)(millis() / 1000);
+  doc["free_heap"] = (uint32_t)ESP.getFreeHeap();
 
+  JsonObject wifi = doc.createNestedObject("wifi");
+  wifi["connected"] = s_mqtt->isWiFiConnected();
+  wifi["ip"] = WiFi.localIP().toString();
+  wifi["rssi"] = WiFi.RSSI();
+
+#if ENABLE_ESPNOW
+  JsonObject espnow = doc.createNestedObject("espnow");
+  espnow["enabled"] = en.initialized;
+  espnow["channel"] = WiFi.channel();
+  espnow["mac"] = WiFi.macAddress();
+  espnow["packets"] = (uint32_t)en.packet_count;
+  espnow["age_sec"] = (enAge >= 0) ? round1(enAge) : -1.0f;
+  espnow["last_sender"] = en.last_mac_str;
+  espnow["last_watts"] = round1(en.last_power_watts);
+  espnow["rssi"] = en.rssi;
+#endif
+
+  JsonObject shelly = doc.createNestedObject("shelly");
+  shelly["ws_connected"] = s_mqtt->isShellyWsConnected();
+  shelly["ip"] = SHELLY_IP;
+  shelly["age_sec"] = round1(gridAge);
+
+  JsonObject opendtu = doc.createNestedObject("opendtu");
+  opendtu["mqtt_connected"] = s_mqtt->isMQTTConnected();
+  opendtu["age_sec"] = round1(pvAge);
+
+  JsonObject modbus = doc.createNestedObject("modbus");
+  modbus["rs485_active"] = s_modbus->isEnabled();
+  modbus["queries"] = s_modbus->getQueryCount();
+  modbus["crc_errors"] = s_modbus->getCrcErrorCount();
+  modbus["rate_hz"] = round1(modbusRate);
+  modbus["age_sec"] = (modbusAge >= 0) ? round1(modbusAge) : -1.0f;
+  modbus["inverter_connected"] = inverterConnected;
+
+  JsonObject gridObj = doc.createNestedObject("grid");
+  gridObj["source"] = source;
+  gridObj["watts"] = round1(gw);
+  gridObj["flow"] = flow;
+  gridObj["volts"] = round1(grid.voltage);
+  gridObj["amps"] = round2(grid.current);
+  gridObj["pf"] = round2(grid.power_factor);
+  gridObj["freq"] = round1(grid.frequency);
+  gridObj["import_kwh"] = round2(grid.import_kwh);
+  gridObj["export_kwh"] = round2(grid.export_kwh);
+
+  JsonObject pvObj = doc.createNestedObject("pv");
+  pvObj["watts"] = round1(MeterState::getPvWatts());
+  pvObj["yield_kwh"] = round2(pv.import_kwh);
+
+  serializeJson(doc, s_jsonBuffer, sizeof(s_jsonBuffer));
   s_server.sendHeader("Access-Control-Allow-Origin", "*");
   s_server.send(200, "application/json", s_jsonBuffer);
 }

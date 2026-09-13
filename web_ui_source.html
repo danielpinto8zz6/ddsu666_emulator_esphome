@@ -78,7 +78,7 @@
   <div class="card" style="margin-bottom: 24px;">
     <div class="card-title">🩺 System Diagnostics & Links</div>
     <div class="status-row"><span>Active Grid Source</span><span id="grid-source-badge" class="badge">--</span></div>
-    <div class="status-row"><span>ESP-NOW Link (Lolin C3)</span><span id="espnow-badge" class="badge">--</span></div>
+    <div class="status-row"><span>ESP-NOW Link (C3 Transmitter)</span><span id="espnow-badge" class="badge">--</span></div>
     <div class="status-row"><span>ESP-NOW Radio Signal</span><span id="espnow-signal">--</span></div>
     <div class="status-row"><span>Shelly Pro EM (WebSocket)</span><span id="shelly-ws-badge" class="badge">--</span></div>
     <div class="status-row"><span>OpenDTU (MQTT)</span><span id="mqtt-badge" class="badge">--</span></div>
@@ -138,7 +138,7 @@
 
         const srcBadge = document.getElementById("grid-source-badge");
         if (d.grid && d.grid.source === "ESPNOW") {
-          srcBadge.innerText = "⚡ ESP-NOW (Lolin Direct)";
+          srcBadge.innerText = "⚡ ESP-NOW (C3 Transmitter)";
           srcBadge.className = "badge badge-accent";
         } else if (d.grid && d.grid.source === "SHELLY_WS") {
           srcBadge.innerText = "🌐 Shelly WS (Fallback)";

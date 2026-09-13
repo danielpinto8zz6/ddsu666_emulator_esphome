@@ -165,11 +165,7 @@ void ModbusRTUServer::handle() {
   }
 }
 
-bool ModbusRTUServer::getRegisterValue(uint8_t slaveId, uint16_t regAddress, uint16_t &value) {
-  MeterTelemetry telemetry = (slaveId == MODBUS_SLAVE_GRID) 
-                             ? MeterState::getGrid() 
-                             : MeterState::getPv();
-
+bool ModbusRTUServer::getRegisterValue(uint8_t slaveId, uint16_t regAddress, const MeterTelemetry &telemetry, uint16_t &value) const {
   // 1. System Registers (0x0001 - 0x000C)
   if (regAddress >= 0x0001 && regAddress <= 0x000C) {
     value = DDSU666_SYS_REGS[regAddress - 1];
@@ -237,6 +233,11 @@ void ModbusRTUServer::processFrame(const uint8_t *frame, size_t length) {
     return;
   }
 
+  // Snapshot meter telemetry once for the entire frame to minimize spinlock contention
+  const MeterTelemetry telemetry = (slaveId == MODBUS_SLAVE_GRID)
+                                 ? MeterState::getGrid()
+                                 : MeterState::getPv();
+
   uint8_t byteCount = (uint8_t)(registerCount * 2);
   uint8_t response[256];
   response[0] = slaveId;
@@ -246,7 +247,7 @@ void ModbusRTUServer::processFrame(const uint8_t *frame, size_t length) {
   size_t respIdx = 3;
   for (uint16_t i = 0; i < registerCount; i++) {
     uint16_t regVal = 0;
-    if (!getRegisterValue(slaveId, startAddress + i, regVal)) {
+    if (!getRegisterValue(slaveId, startAddress + i, telemetry, regVal)) {
       sendException(slaveId, functionCode, 0x02);
       return;
     }
