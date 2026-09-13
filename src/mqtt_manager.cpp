@@ -14,6 +14,9 @@ MQTTManager::MQTTManager(ModbusRTUServer &modbusServer)
     _lastShellyPollTime(0),
     _lastShellyEnergyPollTime(0),
     _lastTelemetryPublishTime(0),
+    _lastFastPublishTime(0),
+    _lastPublishedGridWatts(0.0f),
+    _lastPublishedPvWatts(0.0f),
     _gridWatchdogTriggered(false),
     _pvWatchdogTriggered(false),
     _shellyWsConnected(false),
@@ -178,8 +181,20 @@ void MQTTManager::loop() {
     connectMQTT();
   } else {
     _mqttClient.loop();
-    if (now - _lastTelemetryPublishTime >= 3000) {
+
+    float curGridWatts = MeterState::getGridWatts();
+    float curPvWatts   = MeterState::getPvWatts();
+
+    bool deltaTrigger = (std::fabs(curGridWatts - _lastPublishedGridWatts) >= 25.0f) ||
+                        (std::fabs(curPvWatts - _lastPublishedPvWatts) >= 25.0f);
+    bool heartbeat   = (now - _lastTelemetryPublishTime >= 3000);
+    bool throttleOk  = (now - _lastFastPublishTime >= 250);
+
+    if ((deltaTrigger && throttleOk) || heartbeat) {
       _lastTelemetryPublishTime = now;
+      _lastFastPublishTime = now;
+      _lastPublishedGridWatts = curGridWatts;
+      _lastPublishedPvWatts = curPvWatts;
       publishTelemetry();
     }
   }
@@ -437,7 +452,9 @@ void MQTTManager::publishHADiscovery() {
     { "pv_power", "PV Active Power", "W", "power", "measurement", "pv_w", nullptr },
     { "pv_yield_kwh", "PV Total Yield", "kWh", "energy", "total_increasing", "pv_kwh", nullptr },
     { "inv_rate_hz", "Inverter Modbus Rate", "Hz", nullptr, "measurement", "inv_hz", "diagnostic" },
-    { "wifi_rssi", "WiFi Signal", "dBm", "signal_strength", "measurement", "rssi", "diagnostic" }
+    { "wifi_rssi", "WiFi Signal", "dBm", "signal_strength", "measurement", "rssi", "diagnostic" },
+    { "espnow_rssi", "ESP-NOW Signal", "dBm", "signal_strength", "measurement", "espnow_rssi", "diagnostic" },
+    { "espnow_packets", "ESP-NOW Packets", nullptr, nullptr, "total_increasing", "espnow_pkts", "diagnostic" }
   };
 
   char topic[80];
@@ -468,14 +485,23 @@ void MQTTManager::publishHADiscovery() {
   }
 
   _haDiscoveryPublished = true;
-  Serial.println("[HA Discovery] Published 11 sensor configs to MQTT broker.");
+  Serial.println("[HA Discovery] Published 13 sensor configs to MQTT broker.");
 }
 
 void MQTTManager::publishTelemetry() {
   MeterTelemetry g = MeterState::getGrid();
   MeterTelemetry p = MeterState::getPv();
 
-  char payload[320];
+#if ENABLE_ESPNOW
+  EspNowStats es = ESPNowReceiver::getStats();
+  int espnowRssi = (int)es.rssi;
+  uint32_t espnowPkts = es.packet_count;
+#else
+  int espnowRssi = 0;
+  uint32_t espnowPkts = 0;
+#endif
+
+  char payload[384];
   snprintf(payload, sizeof(payload),
     "{"
       "\"grid_w\":%.1f,"
@@ -488,7 +514,9 @@ void MQTTManager::publishTelemetry() {
       "\"pv_w\":%.1f,"
       "\"pv_kwh\":%.2f,"
       "\"inv_hz\":%.1f,"
-      "\"rssi\":%d"
+      "\"rssi\":%d,"
+      "\"espnow_rssi\":%d,"
+      "\"espnow_pkts\":%lu"
     "}",
     (double)(g.active_power * -1000.0f), // Invert to physical convention (+ = import, - = export)
     (double)g.voltage,
@@ -500,7 +528,9 @@ void MQTTManager::publishTelemetry() {
     (double)(p.active_power * 1000.0f),
     (double)p.import_kwh,
     (double)_modbusServer.getQueryRateHz(),
-    WiFi.RSSI()
+    WiFi.RSSI(),
+    espnowRssi,
+    (unsigned long)espnowPkts
   );
 
   _mqttClient.publish("ddsu666/telemetry", payload, false);

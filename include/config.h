@@ -66,5 +66,7 @@ constexpr const char* TOPIC_OPENDTU_YIELD = "solar/ac/yieldtotal";
 // Wi-Fi Channel Selection (0 = Auto-scan, 1-13 = Force channel to match ESP-NOW peer)
 #define WIFI_FORCE_CHANNEL                1
 
-
-
+// Web OTA Authentication Password
+#ifndef OTA_PASSWORD
+#define OTA_PASSWORD                      "admin"
+#endif

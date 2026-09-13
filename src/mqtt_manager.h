@@ -37,6 +37,10 @@ private:
   uint32_t _lastShellyPollTime;
   uint32_t _lastShellyEnergyPollTime;
   uint32_t _lastTelemetryPublishTime;
+  uint32_t _lastFastPublishTime;
+
+  float _lastPublishedGridWatts;
+  float _lastPublishedPvWatts;
 
   bool _gridWatchdogTriggered;
   bool _pvWatchdogTriggered;

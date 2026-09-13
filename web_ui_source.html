@@ -93,6 +93,7 @@
     <div class="card-title">📦 Wireless Web OTA Update</div>
     <div style="display: flex; gap: 12px; align-items: center; margin-top: 12px; flex-wrap: wrap;">
       <input type="file" id="bin-file" accept=".bin">
+      <input type="password" id="ota-pass" placeholder="Password (admin)" style="background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 8px; color: var(--text); padding: 8px 12px; font-size: 0.85rem; width: 140px;">
       <button class="btn" id="upload-btn" onclick="uploadFirmware()">Upload & Flash</button>
       <span id="upload-status" style="font-size: 0.85rem; color: var(--text-dim);"></span>
     </div>
@@ -213,11 +214,16 @@
 
     async function uploadFirmware() {
       const fileInput = document.getElementById("bin-file");
+      const passInput = document.getElementById("ota-pass");
       const status = document.getElementById("upload-status");
       if (!fileInput.files.length) {
         status.innerText = "Please select a .bin file first!";
         status.style.color = "var(--rose)";
         return;
+      }
+      let password = passInput ? passInput.value.trim() : "";
+      if (!password) {
+        password = localStorage.getItem("ota_pwd") || "admin";
       }
       const file = fileInput.files[0];
       const formData = new FormData();
@@ -226,13 +232,37 @@
       status.style.color = "var(--amber)";
 
       try {
-        const res = await fetch("/update", { method: "POST", body: formData });
+        let res = await fetch("/update?password=" + encodeURIComponent(password), {
+          method: "POST",
+          headers: { "X-OTA-Password": password },
+          body: formData
+        });
+
+        if (res.status === 401) {
+          const prompted = prompt("OTA Authentication Required. Enter Password:", password || "admin");
+          if (!prompted) {
+            status.innerText = "Upload cancelled: password required";
+            status.style.color = "var(--rose)";
+            return;
+          }
+          password = prompted;
+          if (passInput) passInput.value = prompted;
+          localStorage.setItem("ota_pwd", prompted);
+          status.innerText = "Retrying upload...";
+          res = await fetch("/update?password=" + encodeURIComponent(prompted), {
+            method: "POST",
+            headers: { "X-OTA-Password": prompted },
+            body: formData
+          });
+        }
+
         if (res.ok) {
+          if (password) localStorage.setItem("ota_pwd", password);
           status.innerText = "Flash successful! Rebooting in 5s...";
           status.style.color = "var(--emerald)";
           setTimeout(() => location.reload(), 5000);
         } else {
-          status.innerText = "Update failed!";
+          status.innerText = "Update failed! (HTTP " + res.status + ")";
           status.style.color = "var(--rose)";
         }
       } catch (err) {

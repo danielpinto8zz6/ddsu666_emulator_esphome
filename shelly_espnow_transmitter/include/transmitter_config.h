@@ -35,3 +35,8 @@
 // Set USE_BROADCAST to false to unicast with hardware 802.11 ACK
 #define USE_BROADCAST         true
 static const uint8_t LILYGO_MAC[6] = { 0x80, 0xF3, 0xDA, 0xD8, 0x41, 0xD0 };
+
+// Web OTA Authentication Password
+#ifndef OTA_PASSWORD
+#define OTA_PASSWORD          "admin"
+#endif

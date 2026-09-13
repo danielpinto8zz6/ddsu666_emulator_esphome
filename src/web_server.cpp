@@ -11,7 +11,13 @@
 #include "esp_now_receiver.h"
 #endif
 
-static WebServer s_server(80);
+class SafeWebServer : public WebServer {
+public:
+  using WebServer::WebServer;
+  bool isUploadActive() const { return _currentUpload != nullptr; }
+};
+
+static SafeWebServer s_server(80);
 
 static ModbusRTUServer *s_modbus = nullptr;
 static MQTTManager     *s_mqtt   = nullptr;
@@ -122,34 +128,74 @@ static void handleRoot() {
 #endif
 }
 
+static bool s_otaAuthorized = false;
+
+static bool isOtaAuthorized() {
+#ifndef OTA_PASSWORD
+  return true;
+#else
+  if (strlen(OTA_PASSWORD) == 0) return true;
+  if (s_server.authenticate("admin", OTA_PASSWORD)) return true;
+  if (s_server.hasArg("password") && s_server.arg("password") == OTA_PASSWORD) return true;
+  if (s_server.hasHeader("X-OTA-Password") && s_server.header("X-OTA-Password") == OTA_PASSWORD) return true;
+  return false;
+#endif
+}
+
 void initWebServer(ModbusRTUServer &modbus, MQTTManager &mqtt) {
   s_modbus = &modbus;
   s_mqtt   = &mqtt;
+
+  const char *headerkeys[] = {"X-OTA-Password", "Authorization"};
+  s_server.collectHeaders(headerkeys, 2);
 
   s_server.on("/", handleRoot);
   s_server.on("/health", handleHealthJson);
   s_server.on("/status", handleHealthJson);
 
-  // Web Browser OTA firmware upload route
+  s_server.on("/update", HTTP_GET, []() {
+    s_server.sendHeader("Location", "/");
+    s_server.send(302, "text/plain", "");
+  });
+
+  // Web Browser OTA firmware upload route (Protected with OTA_PASSWORD)
   s_server.on("/update", HTTP_POST, []() {
+    if (!isOtaAuthorized() || !s_otaAuthorized) {
+      s_otaAuthorized = false;
+      s_server.sendHeader("Connection", "close");
+      return s_server.requestAuthentication();
+    }
+    s_otaAuthorized = false;
     s_server.sendHeader("Connection", "close");
-    s_server.send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
-    delay(500);
-    ESP.restart();
+    if (Update.hasError()) {
+      s_server.send(500, "text/plain", "FAIL");
+    } else {
+      s_server.send(200, "text/plain", "OK");
+      delay(500);
+      ESP.restart();
+    }
   }, []() {
+    if (!s_server.isUploadActive()) return;
     HTTPUpload& upload = s_server.upload();
     esp_task_wdt_reset();
     if (upload.status == UPLOAD_FILE_START) {
-      Serial.printf("\n[Web OTA] Upload starting: %s\n", upload.filename.c_str());
+      s_otaAuthorized = isOtaAuthorized();
+      if (!s_otaAuthorized) {
+        Serial.println("\n[Web OTA] Unauthorized upload attempt blocked!");
+        return;
+      }
+      Serial.printf("\n[Web OTA] Authorized upload starting: %s\n", upload.filename.c_str());
       if (s_modbus) s_modbus->setEnabled(false);
       if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
         Update.printError(Serial);
       }
     } else if (upload.status == UPLOAD_FILE_WRITE) {
+      if (!s_otaAuthorized) return;
       if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
         Update.printError(Serial);
       }
     } else if (upload.status == UPLOAD_FILE_END) {
+      if (!s_otaAuthorized) return;
       if (Update.end(true)) {
         Serial.printf("\n[Web OTA] Finished: %u bytes. Rebooting...\n", upload.totalSize);
       } else {

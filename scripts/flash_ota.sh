@@ -85,19 +85,31 @@ if [[ ! -f "$BIN_PATH" ]]; then
     exit 1
 fi
 
+# Resolve OTA Password (from secrets.h, environment variable, or fallback "admin")
+OTA_PASS="admin"
+if [[ -f "include/secrets.h" ]]; then
+    EXTRACTED_PASS=$(grep -E '^\s*#define\s+OTA_PASSWORD\s+' include/secrets.h | head -n1 | sed -E 's/.*"([^"]+)".*/\1/' || true)
+    if [[ -n "$EXTRACTED_PASS" ]]; then
+        OTA_PASS="$EXTRACTED_PASS"
+    fi
+fi
+OTA_PASS="${OTA_PASSWORD:-$OTA_PASS}"
+
 BIN_SIZE=$(wc -c < "$BIN_PATH")
 echo -e "${CYAN}==> Target:${NC}    ${ENV_NAME}"
 echo -e "${CYAN}==> Device IP:${NC} ${DEVICE_IP}"
 echo -e "${CYAN}==> Binary:${NC}    ${BIN_PATH} (${BIN_SIZE} bytes)"
-echo -e "${CYAN}==> Uploading OTA firmware to http://${DEVICE_IP}/update...${NC}"
+echo -e "${CYAN}==> Uploading OTA firmware to http://${DEVICE_IP}/update (auth: admin)...${NC}"
 
 # Perform OTA upload with curl (Expect: header is mandatory to prevent 100-continue stalls)
 HTTP_CODE=$(curl -s -o /tmp/ota_response.txt -w "%{http_code}" \
+    -u "admin:${OTA_PASS}" \
     -F "file=@${BIN_PATH}" \
     -H "Expect:" \
+    -H "X-OTA-Password: ${OTA_PASS}" \
     --connect-timeout 8 \
     --max-time 60 \
-    "http://${DEVICE_IP}/update")
+    "http://${DEVICE_IP}/update?password=${OTA_PASS}")
 
 RESPONSE=$(cat /tmp/ota_response.txt 2>/dev/null || echo "")
 

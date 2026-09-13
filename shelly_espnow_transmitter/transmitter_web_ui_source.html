@@ -81,6 +81,7 @@
     <div class="title">📦 Wireless Web OTA Update</div>
     <div style="display:flex;gap:12px;align-items:center;margin-top:10px;flex-wrap:wrap">
       <input type="file" id="bin-file" accept=".bin" style="color:var(--dim);font-size:0.85rem">
+      <input type="password" id="ota-pass" placeholder="Password (admin)" style="background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 10px;font-size:0.85rem;width:130px">
       <button class="btn" onclick="uploadFirmware()">Upload &amp; Flash</button>
       <span id="upload-status" style="font-size:0.85rem;color:var(--dim)"></span>
     </div>
@@ -148,24 +149,53 @@
 
     async function uploadFirmware() {
       const f = document.getElementById("bin-file");
+      const p = document.getElementById("ota-pass");
       const s = document.getElementById("upload-status");
       if (!f.files.length) {
         s.innerText = "Select .bin file!";
         s.style.color = "var(--rose)";
         return;
       }
+      let password = p ? p.value.trim() : "";
+      if (!password) {
+        password = localStorage.getItem("ota_pwd") || "admin";
+      }
       const fd = new FormData();
       fd.append("file", f.files[0], f.files[0].name);
       s.innerText = "Uploading... do not unplug";
       s.style.color = "var(--amber)";
       try {
-        const res = await fetch("/update", { method: "POST", body: fd });
+        let res = await fetch("/update?password=" + encodeURIComponent(password), {
+          method: "POST",
+          headers: { "X-OTA-Password": password },
+          body: fd
+        });
+
+        if (res.status === 401) {
+          const prompted = prompt("OTA Authentication Required. Enter Password:", password || "admin");
+          if (!prompted) {
+            s.innerText = "Upload cancelled: password required";
+            s.style.color = "var(--rose)";
+            return;
+          }
+          password = prompted;
+          if (p) p.value = prompted;
+          localStorage.setItem("ota_pwd", prompted);
+          s.innerText = "Retrying upload...";
+          res = await fetch("/update?password=" + encodeURIComponent(prompted), {
+            method: "POST",
+            headers: { "X-OTA-Password": prompted },
+            body: fd
+          });
+        }
+
         if (res.ok) {
+          if (password) localStorage.setItem("ota_pwd", password);
           s.innerText = "Success! Rebooting...";
           s.style.color = "var(--emerald)";
           setTimeout(() => location.reload(), 5000);
         } else {
-          s.innerText = "Upload failed!";
+          s.innerText = "Upload failed! (HTTP " + res.status + ")";
           s.style.color = "var(--rose)";
         }
       } catch(e) {
