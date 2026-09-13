@@ -121,7 +121,7 @@ ota:
 
 mqtt:
   id: mqtt_bus
-  broker: 10.0.0.1
+  broker: !secret mqtt_broker
   port: 1883
   client_id: "ddsu666-emulator"
   discovery: false
@@ -256,6 +256,20 @@ switch:
     pin: GPIO16
     id: rs485_5v_enable
     restore_mode: ALWAYS_ON
+
+  # Maintenance switch exposed to Home Assistant to simulate a meter disconnect on demand
+  - platform: template
+    name: "RS485 Bus Power (Maintenance)"
+    id: rs485_maintenance_switch
+    icon: "mdi:power"
+    lambda: |-
+      return id(rs485_chip_enable).state && id(rs485_5v_enable).state;
+    turn_on_action:
+      - switch.turn_on: rs485_5v_enable
+      - switch.turn_on: rs485_chip_enable
+    turn_off_action:
+      - switch.turn_off: rs485_chip_enable
+      - switch.turn_off: rs485_5v_enable
 
 # Configure UART using T-CAN485 pin mappings
 uart:

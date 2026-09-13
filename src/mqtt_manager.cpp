@@ -13,14 +13,16 @@ MQTTManager::MQTTManager(ModbusRTUServer &modbusServer)
     _lastWiFiConnectAttempt(0),
     _lastShellyPollTime(0),
     _lastShellyEnergyPollTime(0),
+    _lastTelemetryPublishTime(0),
     _gridWatchdogTriggered(false),
     _pvWatchdogTriggered(false),
-    _shellyWsConnected(false) {
+    _shellyWsConnected(false),
+    _haDiscoveryPublished(false) {
 }
 
 void MQTTManager::begin() {
   _mqttClient.setServer(MQTT_BROKER_IP, MQTT_PORT);
-  _mqttClient.setBufferSize(512);
+  _mqttClient.setBufferSize(768);
   _mqttClient.setCallback([this](char *topic, uint8_t *payload, unsigned int length) {
     this->onMqttMessage(topic, payload, length);
   });
@@ -100,6 +102,7 @@ void MQTTManager::connectMQTT() {
     Serial.println(" connected!");
     _mqttClient.subscribe(TOPIC_OPENDTU_POWER);
     _mqttClient.subscribe(TOPIC_OPENDTU_YIELD);
+    publishHADiscovery();
   } else {
     Serial.printf(" failed, rc=%d. Retrying in 5s\n", _mqttClient.state());
   }
@@ -114,6 +117,7 @@ void MQTTManager::loop() {
       if (_mqttClient.connected()) {
         _mqttClient.disconnect();
       }
+      _haDiscoveryPublished = false;
       MeterState::zeroPvPower();
       _pvWatchdogTriggered = true;
       s_wasConnected = false;
@@ -169,11 +173,15 @@ void MQTTManager::loop() {
     _wsClient.sendTXT("{\"id\":2,\"src\":\"esp32\",\"method\":\"EM1Data.GetStatus\",\"params\":{\"id\":0}}");
   }
 
-  // 2. Service OpenDTU MQTT Client
+  // 2. Service OpenDTU MQTT Client & Telemetry
   if (!_mqttClient.connected()) {
     connectMQTT();
   } else {
     _mqttClient.loop();
+    if (now - _lastTelemetryPublishTime >= 3000) {
+      _lastTelemetryPublishTime = now;
+      publishTelemetry();
+    }
   }
 
   checkWatchdogs();
@@ -401,5 +409,100 @@ void MQTTManager::checkWatchdogs() {
     MeterState::zeroPvPower();
     _pvWatchdogTriggered = true;
   }
+}
+
+void MQTTManager::publishHADiscovery() {
+  if (_haDiscoveryPublished) return;
+
+  const char *dev = "\"dev\":{\"ids\":[\"ddsu666_emulator\"],\"name\":\"Hoymiles DDSU666 Emulator\",\"mf\":\"LILYGO\",\"mdl\":\"T-CAN485\"}";
+
+  struct SensorDef {
+    const char *id;
+    const char *name;
+    const char *unit;
+    const char *dev_cla;
+    const char *stat_cla;
+    const char *val_key;
+    const char *cat;
+  };
+
+  SensorDef sensors[] = {
+    { "grid_power", "Grid Active Power", "W", "power", "measurement", "grid_w", nullptr },
+    { "grid_voltage", "Grid Voltage", "V", "voltage", "measurement", "grid_v", nullptr },
+    { "grid_current", "Grid Current", "A", "current", "measurement", "grid_a", nullptr },
+    { "grid_frequency", "Grid Frequency", "Hz", "frequency", "measurement", "grid_hz", nullptr },
+    { "grid_pf", "Grid Power Factor", nullptr, "power_factor", "measurement", "grid_pf", nullptr },
+    { "grid_import_kwh", "Grid Import Energy", "kWh", "energy", "total_increasing", "grid_imp_kwh", nullptr },
+    { "grid_export_kwh", "Grid Export Energy", "kWh", "energy", "total_increasing", "grid_exp_kwh", nullptr },
+    { "pv_power", "PV Active Power", "W", "power", "measurement", "pv_w", nullptr },
+    { "pv_yield_kwh", "PV Total Yield", "kWh", "energy", "total_increasing", "pv_kwh", nullptr },
+    { "inv_rate_hz", "Inverter Modbus Rate", "Hz", nullptr, "measurement", "inv_hz", "diagnostic" },
+    { "wifi_rssi", "WiFi Signal", "dBm", "signal_strength", "measurement", "rssi", "diagnostic" }
+  };
+
+  char topic[80];
+  char payload[384];
+
+  for (const auto &s : sensors) {
+    snprintf(topic, sizeof(topic), "homeassistant/sensor/ddsu666/%s/config", s.id);
+
+    int offset = snprintf(payload, sizeof(payload),
+      "{\"name\":\"%s\",\"stat_t\":\"ddsu666/telemetry\",\"val_tpl\":\"{{ value_json.%s }}\",\"uniq_id\":\"ddsu666_%s\",%s",
+      s.name, s.val_key, s.id, dev);
+
+    if (s.unit) {
+      offset += snprintf(payload + offset, sizeof(payload) - offset, ",\"unit_of_meas\":\"%s\"", s.unit);
+    }
+    if (s.dev_cla) {
+      offset += snprintf(payload + offset, sizeof(payload) - offset, ",\"dev_cla\":\"%s\"", s.dev_cla);
+    }
+    if (s.stat_cla) {
+      offset += snprintf(payload + offset, sizeof(payload) - offset, ",\"stat_cla\":\"%s\"", s.stat_cla);
+    }
+    if (s.cat) {
+      offset += snprintf(payload + offset, sizeof(payload) - offset, ",\"ent_cat\":\"%s\"", s.cat);
+    }
+    snprintf(payload + offset, sizeof(payload) - offset, "}");
+
+    _mqttClient.publish(topic, payload, true); // Retain true for HA discovery
+  }
+
+  _haDiscoveryPublished = true;
+  Serial.println("[HA Discovery] Published 11 sensor configs to MQTT broker.");
+}
+
+void MQTTManager::publishTelemetry() {
+  MeterTelemetry g = MeterState::getGrid();
+  MeterTelemetry p = MeterState::getPv();
+
+  char payload[320];
+  snprintf(payload, sizeof(payload),
+    "{"
+      "\"grid_w\":%.1f,"
+      "\"grid_v\":%.1f,"
+      "\"grid_a\":%.2f,"
+      "\"grid_hz\":%.1f,"
+      "\"grid_pf\":%.2f,"
+      "\"grid_imp_kwh\":%.2f,"
+      "\"grid_exp_kwh\":%.2f,"
+      "\"pv_w\":%.1f,"
+      "\"pv_kwh\":%.2f,"
+      "\"inv_hz\":%.1f,"
+      "\"rssi\":%d"
+    "}",
+    (double)(g.active_power * -1000.0f), // Invert to physical convention (+ = import, - = export)
+    (double)g.voltage,
+    (double)g.current,
+    (double)g.frequency,
+    (double)g.power_factor,
+    (double)g.import_kwh,
+    (double)g.export_kwh,
+    (double)(p.active_power * 1000.0f),
+    (double)p.import_kwh,
+    (double)_modbusServer.getQueryRateHz(),
+    WiFi.RSSI()
+  );
+
+  _mqttClient.publish("ddsu666/telemetry", payload, false);
 }
 

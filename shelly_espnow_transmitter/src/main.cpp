@@ -6,6 +6,8 @@
 #include <ArduinoJson.h>
 #include <WebServer.h>
 #include <Update.h>
+#include <Preferences.h>
+#include <esp_task_wdt.h>
 #include "transmitter_config.h"
 #include "packet_format.h"
 #include "lolin_web_ui.h"
@@ -13,6 +15,7 @@
 static WebSocketsClient s_wsClient;
 static esp_now_peer_info_t s_peerInfo;
 static WebServer s_server(80);
+static Preferences s_prefs;
 
 static uint8_t s_targetMac[6];
 static bool s_espNowReady = false;
@@ -161,7 +164,11 @@ static void handleShellyJson(const uint8_t *payload, size_t length) {
   if (!em1data.isNull() && em1data.containsKey("total_act_energy")) {
     float wh = em1data["total_act_energy"].as<float>();
     if (!std::isnan(wh) && wh >= 0.0f) {
-      s_cachedEnergyKwh = wh / 1000.0f;
+      float kwh = wh / 1000.0f;
+      if (std::fabs(kwh - s_cachedEnergyKwh) >= 0.05f) {
+        s_prefs.putFloat("energy", kwh);
+      }
+      s_cachedEnergyKwh = kwh;
     }
   }
 
@@ -390,6 +397,17 @@ void setup() {
   // Initialize Web Dashboard & Health API
   initWebServer();
 
+  // Initialize Hardware Task Watchdog (15s timeout)
+  esp_task_wdt_init(15, true);
+  esp_task_wdt_add(NULL);
+
+  // Restore cached energy accumulator from NVS
+  s_prefs.begin("shelly_tx", false);
+  s_cachedEnergyKwh = s_prefs.getFloat("energy", -1.0f);
+  if (s_cachedEnergyKwh >= 0.0f) {
+    Serial.printf("[NVS] Restored cached energy: %.2f kWh\n", s_cachedEnergyKwh);
+  }
+
   // Connect to Shelly Pro EM
   Serial.printf("[Shelly WS] Connecting to ws://%s:%d%s\n", SHELLY_IP, SHELLY_WS_PORT, SHELLY_WS_PATH);
   s_wsClient.begin(SHELLY_IP, SHELLY_WS_PORT, SHELLY_WS_PATH);
@@ -402,6 +420,7 @@ void setup() {
 }
 
 void loop() {
+  esp_task_wdt_reset(); // Feed hardware watchdog
   s_server.handleClient();
   s_wsClient.loop();
 

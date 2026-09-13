@@ -8,7 +8,7 @@
 #include "mqtt_manager.h"
 #include "web_server.h"
 
-#define WDT_TIMEOUT_SECONDS 20
+#define WDT_TIMEOUT_SECONDS 15
 
 static ModbusRTUServer s_modbusServer;
 static MQTTManager s_mqttManager(s_modbusServer);
@@ -17,9 +17,11 @@ static bool s_webInitialized = false;
 // High-Priority Real-Time Modbus Task on Core 1
 void modbusTask(void *param) {
   Serial.printf("[Modbus Task] Running on Core %d\n", xPortGetCoreID());
+  esp_task_wdt_add(NULL);
   s_modbusServer.begin();
 
   while (true) {
+    esp_task_wdt_reset();
     s_modbusServer.handle();
     taskYIELD();
   }
@@ -28,9 +30,6 @@ void modbusTask(void *param) {
 // Networking, MQTT, and Web Server Task on Core 0
 void networkTask(void *param) {
   Serial.printf("[Network Task] Running on Core %d\n", xPortGetCoreID());
-
-  // Hardware Task Watchdog (20s panic timeout)
-  esp_task_wdt_init(WDT_TIMEOUT_SECONDS, true);
   esp_task_wdt_add(NULL);
 
   s_mqttManager.begin();
@@ -69,6 +68,9 @@ void setup() {
 
   // Initialize shared thread-safe meter storage & load persisted energy
   MeterState::init();
+
+  // Initialize Hardware Task Watchdog (15s panic timeout)
+  esp_task_wdt_init(WDT_TIMEOUT_SECONDS, true);
 
   // Launch Core 1 Real-Time Modbus Server (Priority 3 - High)
   xTaskCreatePinnedToCore(

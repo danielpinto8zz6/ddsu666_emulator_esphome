@@ -132,7 +132,7 @@ ota:
 
 mqtt:
   id: mqtt_bus
-  broker: 10.0.0.4
+  broker: !secret mqtt_broker
   port: 1883
   client_id: "ddsu666-emulator"
 
@@ -267,6 +267,25 @@ api:
 
 # Note: Waveshare ESP32-S3-RS485-CAN has fixed power, no hardware enable pins.
 # Failsafe logic now modifies the Modbus address to simulate a hardware fault.
+
+# Maintenance switch exposed to Home Assistant to simulate a meter disconnect on demand
+switch:
+  - platform: template
+    name: "RS485 Modbus Active (Maintenance)"
+    id: rs485_maintenance_switch
+    icon: "mdi:power"
+    lambda: |-
+      return id(rs485_enabled);
+    turn_on_action:
+      - lambda: |-
+          id(rs485_enabled) = true;
+          id(modbus_srv_grid).set_address(2);
+          id(modbus_srv_pv).set_address(1);
+    turn_off_action:
+      - lambda: |-
+          id(rs485_enabled) = false;
+          id(modbus_srv_grid).set_address(99);
+          id(modbus_srv_pv).set_address(99);
 
 # Configure UART using Waveshare ESP32-S3-RS485-CAN pin mappings
 uart:

@@ -1,0 +1,72 @@
+name: CI Build & Firmware Verification
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-esphome:
+    name: Validate ESPHome Configurations
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install ESPHome
+        run: |
+          pip install --upgrade pip
+          pip install esphome
+
+      - name: Prepare Secrets Configuration
+        run: |
+          cp secrets.yaml.example secrets.yaml
+
+      - name: Validate ESPHome (Lilygo T-CAN485)
+        run: |
+          esphome config ddsu666.yaml
+
+      - name: Validate ESPHome (Waveshare ESP32-S3)
+        run: |
+          esphome config ddsu666_waveshare.yaml
+
+  build-platformio:
+    name: Build Native C++ Firmwares
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install PlatformIO
+        run: |
+          pip install --upgrade pip
+          pip install platformio
+
+      - name: Prepare Secrets Configuration
+        run: |
+          cp include/secrets.h.example include/secrets.h
+
+      - name: Build Lilygo T-CAN485 Environment
+        run: |
+          pio run -e lilygo-t-can485
+
+      - name: Build Waveshare ESP32-S3 Environment
+        run: |
+          pio run -e waveshare-esp32-s3
+
+      - name: Build ESP32-C3 SuperMini Transmitter Environment
+        run: |
+          pio run -e esp32-c3-supermini

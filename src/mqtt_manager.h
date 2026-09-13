@@ -36,15 +36,19 @@ private:
   uint32_t _lastWiFiConnectAttempt;
   uint32_t _lastShellyPollTime;
   uint32_t _lastShellyEnergyPollTime;
+  uint32_t _lastTelemetryPublishTime;
 
   bool _gridWatchdogTriggered;
   bool _pvWatchdogTriggered;
   bool _shellyWsConnected;
+  bool _haDiscoveryPublished;
 
   void connectWiFi();
   void connectMQTT();
   void connectShellyWS();
   void checkWatchdogs();
+  void publishHADiscovery();
+  void publishTelemetry();
 
   void onMqttMessage(char *topic, uint8_t *payload, unsigned int length);
   void onWsEvent(WStype_t type, uint8_t *payload, size_t length);
