@@ -58,16 +58,23 @@ static void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
   }
 }
 
+static bool s_espNowInitialized = false;
+
 static void initEspNow() {
   if (s_espNowReady) return;
 
-  if (esp_now_init() != ESP_OK) {
-    Serial.println("[ESP-NOW] Error: Failed to initialize!");
-    return;
+  if (!s_espNowInitialized) {
+    esp_err_t err = esp_now_init();
+    if (err == ESP_OK || err == ESP_ERR_ESPNOW_INTERNAL) {
+      s_espNowInitialized = true;
+      esp_now_register_send_cb(onDataSent);
+      esp_wifi_config_espnow_rate(WIFI_IF_STA, WIFI_PHY_RATE_1M_L);
+    } else {
+      Serial.printf("[ESP-NOW] Error: esp_now_init failed! (0x%X)\n", err);
+      s_espNowReady = false;
+      return;
+    }
   }
-
-  esp_now_register_send_cb(onDataSent);
-  esp_wifi_config_espnow_rate(WIFI_IF_STA, WIFI_PHY_RATE_1M_L);
 
   if (USE_BROADCAST) {
     memset(s_targetMac, 0xFF, 6);
@@ -75,13 +82,21 @@ static void initEspNow() {
     memcpy(s_targetMac, LILYGO_MAC, 6);
   }
 
+  // Remove existing peer if present so re-adding never fails with ESP_ERR_ESPNOW_EXIST
+  if (esp_now_is_peer_exist(s_targetMac)) {
+    esp_now_del_peer(s_targetMac);
+  }
+
   memset(&s_peerInfo, 0, sizeof(s_peerInfo));
   memcpy(s_peerInfo.peer_addr, s_targetMac, 6);
-  s_peerInfo.channel = WiFi.channel();
+  s_peerInfo.channel = 0; // 0 = follow current STA channel dynamically
+  s_peerInfo.ifidx = WIFI_IF_STA;
   s_peerInfo.encrypt = false;
 
-  if (esp_now_add_peer(&s_peerInfo) != ESP_OK) {
-    Serial.println("[ESP-NOW] Error: Failed to add target peer!");
+  esp_err_t peerErr = esp_now_add_peer(&s_peerInfo);
+  if (peerErr != ESP_OK && peerErr != ESP_ERR_ESPNOW_EXIST) {
+    Serial.printf("[ESP-NOW] Error: esp_now_add_peer failed! (0x%X)\n", peerErr);
+    s_espNowReady = false;
     return;
   }
 
@@ -93,7 +108,10 @@ static void initEspNow() {
 }
 
 static void transmitEspNow(float watts, float voltage, float current, float pf, float freq, float energyKwh) {
-  if (!s_espNowReady) return;
+  if (!s_espNowReady) {
+    initEspNow();
+    if (!s_espNowReady) return;
+  }
 
   EspNowPowerPacket pkt;
   pkt.magic = ESPNOW_MAGIC_BYTE;
@@ -114,7 +132,7 @@ static void transmitEspNow(float watts, float voltage, float current, float pf, 
 #endif
 
   if (err != ESP_OK) {
-    Serial.printf("[ESP-NOW] Send error code: %d\n", err);
+    Serial.printf("[ESP-NOW] Send error code: 0x%X\n", err);
   }
 }
 
@@ -282,7 +300,7 @@ static void handleHealthJson() {
       "\"free_heap\":%lu,"
       "\"wifi\":{\"connected\":%s,\"ip\":\"%s\",\"rssi\":%d,\"channel\":%d},"
       "\"shelly\":{\"connected\":%s,\"ip\":\"%s\",\"age_sec\":%.1f,\"watts\":%.1f,\"volts\":%.1f,\"amps\":%.2f,\"pf\":%.2f,\"freq\":%.1f,\"energy_kwh\":%.2f},"
-      "\"espnow\":{\"mode\":\"%s\",\"target_mac\":\"%s\",\"channel\":%d,\"sent\":%lu,\"ack\":%lu,\"fail\":%lu,\"ack_rate_pct\":%.1f,\"age_sec\":%.1f}"
+      "\"espnow\":{\"mode\":\"%s\",\"target_mac\":\"%s\",\"channel\":%d,\"ready\":%s,\"sent\":%lu,\"ack\":%lu,\"fail\":%lu,\"ack_rate_pct\":%.1f,\"age_sec\":%.1f}"
     "}",
     healthy ? "HEALTHY" : (s_shellyConnected ? "DEGRADED" : "OFFLINE"),
     (unsigned long)(millis() / 1000),
@@ -303,6 +321,7 @@ static void handleHealthJson() {
     USE_BROADCAST ? "BROADCAST" : "UNICAST",
     targetMacStr,
     WiFi.channel(),
+    s_espNowReady ? "true" : "false",
     (unsigned long)s_packetsSent,
     (unsigned long)s_packetsSuccess,
     (unsigned long)s_packetsFail,
@@ -344,6 +363,13 @@ static void initWebServer() {
   s_server.on("/update", HTTP_GET, []() {
     s_server.sendHeader("Location", "/");
     s_server.send(302, "text/plain", "");
+  });
+
+  s_server.on("/reboot", HTTP_POST, []() {
+    if (!isOtaAuthorized()) return s_server.requestAuthentication();
+    s_server.send(200, "text/plain", "Rebooting...");
+    delay(500);
+    ESP.restart();
   });
 
   // Wireless Web Browser OTA route (Protected with OTA_PASSWORD)
@@ -437,6 +463,9 @@ void setup() {
   Serial.printf("[WiFi] Signal RSSI: %d dBm\n", WiFi.RSSI());
   Serial.printf("[WiFi] Radio Channel: %d (Locks ESP-NOW to this channel)\n", WiFi.channel());
 
+  WiFi.setSleep(false);
+  esp_wifi_set_ps(WIFI_PS_NONE);
+
   // Initialize ESP-NOW
   initEspNow();
 
@@ -479,13 +508,15 @@ void loop() {
   }
 #endif
 
-  // Re-verify Wi-Fi connection
+  // Re-verify Wi-Fi connection for Shelly WebSocket
   if (WiFi.status() != WL_CONNECTED) {
-    s_espNowReady = false;
     s_shellyConnected = false;
     delay(100);
     return;
-  } else if (!s_espNowReady) {
+  }
+
+  // Ensure ESP-NOW is ready
+  if (!s_espNowReady) {
     initEspNow();
   }
 
