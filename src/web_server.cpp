@@ -158,6 +158,14 @@ void initWebServer(ModbusRTUServer &modbus, MQTTManager &mqtt) {
     s_server.send(302, "text/plain", "");
   });
 
+  s_server.on("/reboot", HTTP_POST, []() {
+    if (!isOtaAuthorized()) return s_server.requestAuthentication();
+    s_server.sendHeader("Connection", "close");
+    s_server.send(200, "text/plain", "Rebooting...");
+    delay(500);
+    ESP.restart();
+  });
+
   // Web Browser OTA firmware upload route (Protected with OTA_PASSWORD)
   s_server.on("/update", HTTP_POST, []() {
     if (!isOtaAuthorized() || !s_otaAuthorized) {

@@ -27,7 +27,7 @@
 #endif
 #define SHELLY_WS_PORT        80
 #define SHELLY_WS_PATH        "/rpc"
-#define SHELLY_POLL_MS        200     // 200ms ultra-fast polling for zero-export control
+#define SHELLY_POLL_MS        500     // 500ms ultra-fast polling for zero-export control
 #define SHELLY_ENERGY_POLL_MS 60000   // 60s polling for energy accumulators
 
 // Target Lilygo T-CAN485 ESP-NOW Configuration

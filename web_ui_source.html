@@ -33,6 +33,8 @@
     .status-row:last-child { border-bottom: none; }
     .btn { background: #0284c7; color: #fff; padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
     .btn:hover { background: #0369a1; }
+    .btn-danger { background: rgba(239, 68, 68, 0.15); border: 1px solid var(--rose); color: var(--rose); padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 600; transition: background 0.2s; }
+    .btn-danger:hover { background: rgba(239, 68, 68, 0.3); }
     input[type=file] { color: var(--text-dim); font-size: 0.85rem; }
     footer { text-align: center; color: var(--text-dim); font-size: 0.8rem; margin-top: 32px; }
   </style>
@@ -90,11 +92,12 @@
   </div>
 
   <div class="card">
-    <div class="card-title">📦 Wireless Web OTA Update</div>
+    <div class="card-title">📦 Wireless Web OTA Update & Device Control</div>
     <div style="display: flex; gap: 12px; align-items: center; margin-top: 12px; flex-wrap: wrap;">
       <input type="file" id="bin-file" accept=".bin">
       <input type="password" id="ota-pass" placeholder="Password (admin)" style="background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 8px; color: var(--text); padding: 8px 12px; font-size: 0.85rem; width: 140px;">
       <button class="btn" id="upload-btn" onclick="uploadFirmware()">Upload & Flash</button>
+      <button class="btn-danger" id="reboot-btn" onclick="rebootDevice()">Reboot Device</button>
       <span id="upload-status" style="font-size: 0.85rem; color: var(--text-dim);"></span>
     </div>
   </div>
@@ -268,6 +271,60 @@
       } catch (err) {
         status.innerText = "Flash successful! Device rebooting...";
         status.style.color = "var(--emerald)";
+        setTimeout(() => location.reload(), 6000);
+      }
+    }
+
+    async function rebootDevice() {
+      if (!confirm("Are you sure you want to reboot the device?")) return;
+      const passInput = document.getElementById("ota-pass");
+      let password = passInput ? passInput.value.trim() : "";
+      if (!password) password = localStorage.getItem("ota_pwd") || "admin";
+
+      const status = document.getElementById("upload-status");
+      if (status) {
+        status.innerText = "Rebooting device...";
+        status.style.color = "var(--amber)";
+      }
+
+      try {
+        let res = await fetch("/reboot?password=" + encodeURIComponent(password), {
+          method: "POST",
+          headers: { "X-OTA-Password": password }
+        });
+
+        if (res.status === 401) {
+          const prompted = prompt("OTA Password Required to Reboot:", password || "admin");
+          if (!prompted) {
+            if (status) { status.innerText = "Reboot cancelled"; status.style.color = "var(--rose)"; }
+            return;
+          }
+          password = prompted;
+          if (passInput) passInput.value = prompted;
+          localStorage.setItem("ota_pwd", prompted);
+          res = await fetch("/reboot?password=" + encodeURIComponent(prompted), {
+            method: "POST",
+            headers: { "X-OTA-Password": prompted }
+          });
+        }
+
+        if (res.ok) {
+          if (status) {
+            status.innerText = "Device rebooting... reloading in 6s";
+            status.style.color = "var(--emerald)";
+          }
+          setTimeout(() => location.reload(), 6000);
+        } else {
+          if (status) {
+            status.innerText = "Reboot failed! (HTTP " + res.status + ")";
+            status.style.color = "var(--rose)";
+          }
+        }
+      } catch (e) {
+        if (status) {
+          status.innerText = "Device rebooting... reloading in 6s";
+          status.style.color = "var(--emerald)";
+        }
         setTimeout(() => location.reload(), 6000);
       }
     }

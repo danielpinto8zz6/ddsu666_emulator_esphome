@@ -32,6 +32,8 @@
     .row:last-child { border-bottom: none; }
     .btn { background: #0284c7; color: #fff; padding: 8px 14px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
     .btn:hover { background: #0369a1; }
+    .btn-danger { background: rgba(244, 63, 94, 0.15); border: 1px solid var(--rose); color: var(--rose); padding: 8px 14px; border-radius: 6px; cursor: pointer; font-weight: 600; transition: background 0.2s; }
+    .btn-danger:hover { background: rgba(244, 63, 94, 0.3); }
     footer { text-align: center; color: var(--dim); font-size: 0.8rem; margin-top: 24px; }
   </style>
 </head>
@@ -46,16 +48,16 @@
 
   <div class="grid">
     <div class="card">
-      <div class="title">⚡ Live Grid Power</div>
+      <div class="title">⚡ Real-Time Grid Power</div>
       <div class="val" id="power-w">-- W</div>
       <div class="sub" id="power-dir">Status: --</div>
     </div>
 
     <div class="card">
-      <div class="title">📡 ESP-NOW Link</div>
-      <div class="row"><span>Transmission Mode</span><strong id="target-mode" style="color:var(--cyan)">--</strong></div>
-      <div class="row"><span>Target MAC</span><strong id="target-mac">--</strong></div>
-      <div class="row"><span>802.11 ACK Rate</span><strong id="ack-rate" style="color:var(--emerald)">--%</strong></div>
+      <div class="title">📡 ESP-NOW Link Status</div>
+      <div class="row"><span>Target Mode</span><strong id="target-mode" style="color:var(--cyan)">--</strong></div>
+      <div class="row"><span>Target Peer</span><strong id="target-mac">--</strong></div>
+      <div class="row"><span>ACK Delivery Rate</span><strong id="ack-rate" style="color:var(--emerald)">--</strong></div>
       <div class="row"><span>Packets Sent</span><strong id="sent-count">--</strong></div>
       <div class="row"><span>NACK / Failures</span><strong id="fail-count">--</strong></div>
     </div>
@@ -78,11 +80,12 @@
   </div>
 
   <div class="card">
-    <div class="title">📦 Wireless Web OTA Update</div>
+    <div class="title">📦 Wireless Web OTA Update & Device Control</div>
     <div style="display:flex;gap:12px;align-items:center;margin-top:10px;flex-wrap:wrap">
       <input type="file" id="bin-file" accept=".bin" style="color:var(--dim);font-size:0.85rem">
       <input type="password" id="ota-pass" placeholder="Password (admin)" style="background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 10px;font-size:0.85rem;width:130px">
       <button class="btn" onclick="uploadFirmware()">Upload &amp; Flash</button>
+      <button class="btn-danger" onclick="rebootDevice()">Reboot Device</button>
       <span id="upload-status" style="font-size:0.85rem;color:var(--dim)"></span>
     </div>
   </div>
@@ -201,6 +204,60 @@
       } catch(e) {
         s.innerText = "Rebooting...";
         s.style.color = "var(--emerald)";
+        setTimeout(() => location.reload(), 6000);
+      }
+    }
+
+    async function rebootDevice() {
+      if (!confirm("Are you sure you want to reboot the device?")) return;
+      const p = document.getElementById("ota-pass");
+      let password = p ? p.value.trim() : "";
+      if (!password) password = localStorage.getItem("ota_pwd") || "admin";
+
+      const s = document.getElementById("upload-status");
+      if (s) {
+        s.innerText = "Rebooting device...";
+        s.style.color = "var(--amber)";
+      }
+
+      try {
+        let res = await fetch("/reboot?password=" + encodeURIComponent(password), {
+          method: "POST",
+          headers: { "X-OTA-Password": password }
+        });
+
+        if (res.status === 401) {
+          const prompted = prompt("OTA Password Required to Reboot:", password || "admin");
+          if (!prompted) {
+            if (s) { s.innerText = "Reboot cancelled"; s.style.color = "var(--rose)"; }
+            return;
+          }
+          password = prompted;
+          if (p) p.value = prompted;
+          localStorage.setItem("ota_pwd", prompted);
+          res = await fetch("/reboot?password=" + encodeURIComponent(prompted), {
+            method: "POST",
+            headers: { "X-OTA-Password": prompted }
+          });
+        }
+
+        if (res.ok) {
+          if (s) {
+            s.innerText = "Rebooting... reloading in 6s";
+            s.style.color = "var(--emerald)";
+          }
+          setTimeout(() => location.reload(), 6000);
+        } else {
+          if (s) {
+            s.innerText = "Reboot failed! (HTTP " + res.status + ")";
+            s.style.color = "var(--rose)";
+          }
+        }
+      } catch(e) {
+        if (s) {
+          s.innerText = "Rebooting... reloading in 6s";
+          s.style.color = "var(--emerald)";
+        }
         setTimeout(() => location.reload(), 6000);
       }
     }

@@ -367,6 +367,7 @@ static void initWebServer() {
 
   s_server.on("/reboot", HTTP_POST, []() {
     if (!isOtaAuthorized()) return s_server.requestAuthentication();
+    s_server.sendHeader("Connection", "close");
     s_server.send(200, "text/plain", "Rebooting...");
     delay(500);
     ESP.restart();
