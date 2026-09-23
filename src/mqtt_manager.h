@@ -9,6 +9,9 @@
 #include "secrets.h"
 #include "meter_data.h"
 #include "modbus_rtu.h"
+#if (PV_SOURCE_MODE == 2)
+#include "hoymiles_dtu.h"
+#endif
 
 class MQTTManager {
 public:
@@ -23,12 +26,19 @@ public:
   bool isRS485Enabled() const { return _modbusServer.isEnabled(); }
   uint32_t getLastGridMsgTime() const { return _lastGridMsgTime; }
   uint32_t getLastPvMsgTime() const { return _lastPvMsgTime; }
+#if (PV_SOURCE_MODE == 2)
+  bool isHoymilesDtuConnected() const { return _hoymilesDtu.isConnected(); }
+  const HoymilesDTUClient& getHoymilesDtu() const { return _hoymilesDtu; }
+#endif
 
 private:
   ModbusRTUServer &_modbusServer;
   WiFiClient _wifiClient;
   PubSubClient _mqttClient;
   WebSocketsClient _wsClient;
+#if (PV_SOURCE_MODE == 2)
+  HoymilesDTUClient _hoymilesDtu;
+#endif
 
   uint32_t _lastGridMsgTime;
   uint32_t _lastPvMsgTime;

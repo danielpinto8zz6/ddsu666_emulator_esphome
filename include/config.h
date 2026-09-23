@@ -17,6 +17,14 @@
   constexpr int PIN_RS485_RX          = 18;
   constexpr int PIN_RS485_DE_RE       = 21;
   #define HAS_RS485_POWER_PINS 0
+#elif defined(BOARD_XIAO_ESP32S3)
+  // Seeed Studio XIAO ESP32-S3 + XIAO RS485 Expansion Board
+  // D4 = GPIO5 (TX), D5 = GPIO6 (RX), D2 = GPIO3 (DE/RE)
+  constexpr const char* BOARD_NAME    = "Seeed Studio XIAO ESP32-S3 RS485";
+  constexpr int PIN_RS485_TX          = 5;
+  constexpr int PIN_RS485_RX          = 6;
+  constexpr int PIN_RS485_DE_RE       = 3;
+  #define HAS_RS485_POWER_PINS 0
 #else
   // LILYGO T-CAN485 (ESP32) - DEFAULT TARGET
   constexpr const char* BOARD_NAME    = "LILYGO T-CAN485";
@@ -48,7 +56,22 @@ constexpr const char* SHELLY_WS_PATH      = "/rpc";
 constexpr uint32_t SHELLY_POLL_INTERVAL_MS= 200;   // 200ms ultra-fast polling for zero-export control
 constexpr uint32_t SHELLY_ENERGY_INTERVAL_MS = 60000; // 60s energy counter interval
 
-// OpenDTU MQTT Topics
+// PV Solar Generation Source:
+// 0 = None / Manual
+// 1 = OpenDTU via MQTT (Topic solar/ac/power & yield)
+// 2 = Direct Hoymiles DTU-Lite-S / DTU-WLite TCP Polling (Port 10081)
+#ifndef PV_SOURCE_MODE
+#define PV_SOURCE_MODE                    2
+#endif
+
+// Hoymiles DTU-Lite-S Configuration (when PV_SOURCE_MODE == 2)
+#ifndef HOYMILES_DTU_IP
+#define HOYMILES_DTU_IP                   "10.0.0.164"
+#endif
+constexpr uint16_t HOYMILES_DTU_PORT      = 10081;
+constexpr uint32_t HOYMILES_POLL_INTERVAL_MS = 10000; // 10s polling interval
+
+// OpenDTU MQTT Topics (used when PV_SOURCE_MODE == 1, or for bridging)
 constexpr const char* TOPIC_OPENDTU_POWER = "solar/ac/power";
 constexpr const char* TOPIC_OPENDTU_YIELD = "solar/ac/yieldtotal";
 

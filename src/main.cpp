@@ -59,7 +59,14 @@ void setup() {
   esp_bt_controller_mem_release(ESP_BT_MODE_BTDM);
 
   Serial.begin(115200);
+#if ARDUINO_USB_CDC_ON_BOOT
+  unsigned long startWait = millis();
+  while (!Serial && (millis() - startWait < 2000)) {
+    delay(10);
+  }
+#else
   delay(200);
+#endif
   Serial.println("\n==================================================");
   Serial.printf(" DDSU666 Modbus RTU Dual Meter Emulator\n");
   Serial.printf(" Board: %s\n", BOARD_NAME);

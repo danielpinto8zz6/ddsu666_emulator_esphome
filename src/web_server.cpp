@@ -86,6 +86,19 @@ static void handleHealthJson() {
   shelly["ip"] = SHELLY_IP;
   shelly["age_sec"] = round1(gridAge);
 
+#if (PV_SOURCE_MODE == 2)
+  JsonObject dtu = doc.createNestedObject("hoymiles_dtu");
+  const auto& hd = s_mqtt->getHoymilesDtu();
+  dtu["connected"] = hd.isConnected();
+  dtu["has_enc_rand"] = hd.hasEncRand();
+  dtu["valid_data"] = hd.hasValidData();
+  dtu["last_ret"] = hd.getLastDecryptRet();
+  dtu["rx_len"] = (int)hd.getLastRxLen();
+  dtu["resp_len"] = hd.getLastRespLen();
+  dtu["ip"] = HOYMILES_DTU_IP;
+  dtu["age_sec"] = round1(pvAge);
+#endif
+
   JsonObject opendtu = doc.createNestedObject("opendtu");
   opendtu["mqtt_connected"] = s_mqtt->isMQTTConnected();
   opendtu["age_sec"] = round1(pvAge);

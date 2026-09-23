@@ -35,13 +35,14 @@ Hoymiles HYS/HYB hybrid inverters poll two CHINT DDSU666 meters over RS-485 Modb
 │  Shelly Pro EM 50A       │──[MQTT / WS]─────>│                               │
 │  (Main House Grid Meter) │                   │  ESP32 Meter Emulator         │──[RS-485 Modbus RTU]──> Hoymiles Hybrid Inverter
 ├──────────────────────────┤                   │  • Slave ID 2: Grid Meter     │   (COM Port Pins 1 & 2)  (HYS / HYB Series)
-│  OpenDTU-onBattery       │──[MQTT]──────────>│  • Slave ID 1: PV Solar Meter │
-│  (PV Microinverters)     │                   │                               │
+│  Hoymiles DTU-Lite-S     │──[Direct TCP]────>│  • Slave ID 1: PV Solar Meter │
+│    -- OR --              │                   │                               │
+│  OpenDTU-onBattery       │──[MQTT]──────────>│                               │
 └──────────────────────────┘                   └───────────────────────────────┘
 ```
 
 - **Slave ID 2 (Grid Meter)**: Emulates the main grid connection meter. Provides active power, voltage, current, power factor, frequency, and cumulative import/export kWh for the inverter's **Zero-Export (Autoconsumo)** PID control loop.
-- **Slave ID 1 (PV Meter)**: Emulates a PV string meter using generation data from OpenDTU. Allows the inverter to display solar generation and battery charging on the Hoymiles S-Miles app without a separate physical CT.
+- **Slave ID 1 (PV Meter)**: Emulates a PV string meter using generation data polled directly from **Hoymiles DTU-Lite-S** over local TCP, or via **OpenDTU** MQTT. Allows the inverter to display solar generation and battery charging on the Hoymiles S-Miles app without a separate physical CT.
 
 ---
 
@@ -60,6 +61,17 @@ Hoymiles HYS/HYB hybrid inverters poll two CHINT DDSU666 meters over RS-485 Modb
 * **RS-485 TX**: GPIO 17
 * **RS-485 RX**: GPIO 18
 * **Direction Control (DE/!RE)**: GPIO 21
+
+### 3. Seeed Studio XIAO ESP32-S3 + XIAO RS485 Expansion Board
+* Ultra-compact ESP32-S3 with plug-and-play [XIAO RS485 Expansion Board](https://wiki.seeedstudio.com/XIAO-RS485-Expansion-Board/).
+* **RS-485 TX**: GPIO 5 (XIAO D4)
+* **RS-485 RX**: GPIO 6 (XIAO D5)
+* **Direction Control (DE/!RE)**: GPIO 3 (XIAO D2)
+* **Expansion Board Switches**:
+  * **120R Switch (SW1)**: Set to **ON** to enable the 120Ω bus termination resistor (standard when connected directly to inverter).
+  * **5V IN/OUT Switch (SW2)**:
+    * Set to **OUT** when powering the XIAO ESP32-S3 via USB-C (default).
+    * Set to **IN** only when supplying 5V externally via the screw terminals (never set to OUT with external power connected!).
 
 ### RS-485 to Inverter Wiring
 
@@ -80,6 +92,7 @@ Hoymiles HYS/HYB hybrid inverters poll two CHINT DDSU666 meters over RS-485 Modb
 ddsu666_emulator_esphome/
 ├── ddsu666.yaml                    # ESPHome Configuration: LILYGO T-CAN485
 ├── ddsu666_waveshare.yaml          # ESPHome Configuration: Waveshare ESP32-S3
+├── ddsu666_xiao.yaml               # ESPHome Configuration: Seeed Studio XIAO ESP32-S3
 ├── secrets.yaml.example            # ESPHome Secrets template
 ├── shelly_pro_em_script.js         # Shelly Pro EM 500ms high-frequency mJS script
 │
@@ -146,6 +159,9 @@ esphome run ddsu666.yaml
 
 # For Waveshare ESP32-S3 RS485:
 esphome run ddsu666_waveshare.yaml
+
+# For Seeed Studio XIAO ESP32-S3 RS485:
+esphome run ddsu666_xiao.yaml
 ```
 
 Once flashed via USB, all subsequent updates can be pushed wirelessly over Wi-Fi OTA.
@@ -224,14 +240,15 @@ The **Native C++** implementation is an ultra-high-performance alternative engin
 ### Key Advantages
 * **Dual-Core FreeRTOS Isolation**:
   * **Core 1**: Dedicated 100% exclusively to RS-485 Modbus RTU polling. Sub-millisecond response latency with zero jitter.
-  * **Core 0**: Handles Wi-Fi, direct Shelly WebSockets, MQTT, ESP-NOW, WebUI, and OTA updates.
+  * **Core 0**: Handles Wi-Fi, direct Shelly WebSockets, direct Hoymiles DTU TCP client, MQTT, ESP-NOW, WebUI, and OTA updates.
 * **Direct Shelly WebSocket Client (200ms)**: Connects directly to `ws://<SHELLY_IP>/rpc` without requiring an MQTT broker or Shelly script.
+* **Direct Hoymiles DTU-Lite-S / DTU-WLite Polling**: Direct TCP polling on port `10081` with hardware-accelerated AES-128-GCM decryption and automatic clock sync—no OpenDTU or external gateway required.
 * **Rolling Modbus Health & Query Rate Monitor**: WebUI displays live query frequency (~14.5 Hz) and inverter link status.
 * **ESP-NOW Wireless Bridge Support**: Allows an optional satellite microcontroller (ESP32-C3 SuperMini) to beam telemetry directly over the air.
 
 ---
 
-### Configuration (`secrets.h`)
+### Configuration (`secrets.h` & `config.h`)
 
 1. Copy [`include/secrets.h.example`](file:///home/danielpinto/Documentos/ddsu666_emulator_esphome/include/secrets.h.example) to `include/secrets.h`:
    ```bash
@@ -241,15 +258,24 @@ The **Native C++** implementation is an ultra-high-performance alternative engin
    ```c
    #pragma once
 
-   // Wi-Fi Credentials (shared by Lilygo and ESP32-C3 transmitter)
+   // Wi-Fi Credentials (shared by Lilygo, XIAO, and ESP32-C3 transmitter)
    #define WIFI_SSID       "YourWiFiSSID"
    #define WIFI_PASSWORD   "YourWiFiPassword"
 
-   // Shelly Pro EM IP Address
+   // Shelly Pro EM IP Address (Grid Meter)
    #define SHELLY_IP       "10.0.0.187"
 
-   // MQTT Broker Configuration (for OpenDTU PV meter)
-   #define MQTT_BROKER_IP  "10.0.0.1"
+   // PV Generation Source Mode:
+   // 0 = None / Manual
+   // 1 = OpenDTU via MQTT
+   // 2 = Direct Hoymiles DTU-Lite-S / DTU-WLite TCP Polling (Recommended)
+   #define PV_SOURCE_MODE  2
+
+   // Hoymiles DTU-Lite-S (when PV_SOURCE_MODE == 2)
+   #define HOYMILES_DTU_IP "10.0.0.164"
+
+   // MQTT Broker Configuration (for OpenDTU PV meter, or telemetry bridge)
+   #define MQTT_BROKER_IP  "10.0.0.187"
    #define MQTT_PORT       1883
    #define MQTT_USER       ""
    #define MQTT_PASSWORD   ""
@@ -259,6 +285,12 @@ The **Native C++** implementation is an ultra-high-performance alternative engin
    #define OTA_PASSWORD    "admin"
    ```
 
+#### Standalone Python Companion Script:
+If you are using ESPHome or want to bridge your Hoymiles DTU-Lite-S directly to MQTT without running native C++ on the meter emulator:
+```bash
+python3 scripts/hoymiles_dtu_mqtt.py --dtu-host 10.0.0.164 --mqtt-host 10.0.0.187 --interval 10
+```
+
 ---
 
 ### Compiling & Flashing (PlatformIO)
@@ -266,20 +298,24 @@ The **Native C++** implementation is an ultra-high-performance alternative engin
 Activate your Python virtual environment or use global `pio`:
 
 ```bash
-# 1. Build firmware
-pio run -e lilygo-t-can485
+# 1. Build firmware (choose target: lilygo-t-can485, waveshare-esp32-s3, or xiao-esp32-s3)
+pio run -e xiao-esp32-s3
 
 # 2. Flash via USB
-pio run -e lilygo-t-can485 -t upload
+pio run -e xiao-esp32-s3 -t upload
 
 # 3. View real-time logs
 pio device monitor -b 115200
 ```
 
 #### Over-The-Air (OTA) Updates:
-Future updates can be uploaded directly over HTTP:
+Future updates can be uploaded directly over HTTP using the included script or curl:
 ```bash
-curl -F "file=@.pio/build/lilygo-t-can485/firmware.bin" -H "Expect:" http://<ESP32_IP>/update
+# Using the helper script:
+./scripts/flash_ota.sh xiao <ESP32_IP> --build
+
+# Or directly via curl:
+curl -u "admin:admin" -F "file=@.pio/build/xiao-esp32-s3/firmware.bin" -H "Expect:" http://<ESP32_IP>/update?password=admin
 ```
 
 ---

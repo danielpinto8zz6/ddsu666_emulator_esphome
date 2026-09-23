@@ -42,6 +42,10 @@ void MQTTManager::begin() {
   connectWiFi();
   connectShellyWS();
 
+#if (PV_SOURCE_MODE == 2)
+  _hoymilesDtu.begin(HOYMILES_DTU_IP, HOYMILES_DTU_PORT, HOYMILES_POLL_INTERVAL_MS);
+#endif
+
   _lastGridMsgTime = millis();
   _lastPvMsgTime = millis();
   _lastShellyPollTime = millis();
@@ -103,8 +107,10 @@ void MQTTManager::connectMQTT() {
 
   if (ok) {
     Serial.println(" connected!");
+#if (PV_SOURCE_MODE == 1)
     _mqttClient.subscribe(TOPIC_OPENDTU_POWER);
     _mqttClient.subscribe(TOPIC_OPENDTU_YIELD);
+#endif
     publishHADiscovery();
   } else {
     Serial.printf(" failed, rc=%d. Retrying in 5s\n", _mqttClient.state());
@@ -176,7 +182,28 @@ void MQTTManager::loop() {
     _wsClient.sendTXT("{\"id\":2,\"src\":\"esp32\",\"method\":\"EM1Data.GetStatus\",\"params\":{\"id\":0}}");
   }
 
-  // 2. Service OpenDTU MQTT Client & Telemetry
+  // 2. Service PV Source (Hoymiles DTU or OpenDTU MQTT)
+#if (PV_SOURCE_MODE == 2)
+  _hoymilesDtu.loop();
+  if (_hoymilesDtu.hasValidData()) {
+    uint32_t lastDtuTime = _hoymilesDtu.getLastSuccessTime();
+    if (lastDtuTime != _lastPvMsgTime) {
+      _lastPvMsgTime = lastDtuTime;
+      _pvWatchdogTriggered = false;
+
+      // Also publish to MQTT broker if connected so other devices/dashboards can see PV telemetry
+      if (_mqttClient.connected()) {
+        char pBuf[16], yBuf[16];
+        snprintf(pBuf, sizeof(pBuf), "%.1f", _hoymilesDtu.getActivePowerW());
+        snprintf(yBuf, sizeof(yBuf), "%.3f", _hoymilesDtu.getTotalYieldKwh());
+        _mqttClient.publish(TOPIC_OPENDTU_POWER, pBuf, false);
+        _mqttClient.publish(TOPIC_OPENDTU_YIELD, yBuf, true);
+      }
+    }
+  }
+#endif
+
+  // 3. Service OpenDTU MQTT Client & Telemetry
   if (!_mqttClient.connected()) {
     connectMQTT();
   } else {
@@ -419,11 +446,17 @@ void MQTTManager::checkWatchdogs() {
   }
 
   // 2. PV watchdog (10 seconds timeout)
+#if (PV_SOURCE_MODE != 0)
   if (!_pvWatchdogTriggered && (now - _lastPvMsgTime > (WATCHDOG_TIMEOUT_SEC * 1000))) {
+#if (PV_SOURCE_MODE == 2)
+    Serial.println("[FAILSAFE] Hoymiles DTU timeout! Zeroing PV power.");
+#else
     Serial.println("[FAILSAFE] PV OpenDTU MQTT timeout! Zeroing PV power.");
+#endif
     MeterState::zeroPvPower();
     _pvWatchdogTriggered = true;
   }
+#endif
 }
 
 void MQTTManager::publishHADiscovery() {
