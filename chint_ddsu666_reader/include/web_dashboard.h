@@ -26,12 +26,13 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     body { background-color: var(--bg); color: var(--text); padding: 20px; min-height: 100vh; display: flex; flex-direction: column; align-items: center; }
     .container { width: 100%; max-width: 900px; display: flex; flex-direction: column; gap: 20px; }
-    header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+    header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 10px; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 10px; }
     .title-box h1 { font-size: 1.4rem; font-weight: 700; background: var(--accent-grad); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
     .title-box p { font-size: 0.85rem; color: var(--muted); margin-top: 4px; }
     .badge { padding: 4px 10px; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
     .badge-online { background: rgba(16, 185, 129, 0.2); color: var(--green); border: 1px solid rgba(16, 185, 129, 0.3); }
     .badge-offline { background: rgba(244, 63, 94, 0.2); color: var(--red); border: 1px solid rgba(244, 63, 94, 0.3); }
+    .badge-stream { background: rgba(56, 189, 248, 0.2); color: var(--accent); border: 1px solid rgba(56, 189, 248, 0.4); }
     .hero-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 16px; padding: 30px; text-align: center; position: relative; backdrop-filter: blur(12px); box-shadow: 0 10px 25px -5px rgba(0,0,0,0.3); }
     .hero-value { font-size: 3.8rem; font-weight: 800; letter-spacing: -0.03em; margin: 10px 0; }
     .hero-unit { font-size: 1.5rem; color: var(--muted); margin-left: 4px; }
@@ -49,8 +50,12 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     .diag-row:last-child { border-bottom: none; }
     .diag-label { color: var(--muted); }
     .diag-val { font-weight: 600; }
-    .settings-btn { background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--text); padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; font-weight: 600; transition: all 0.2s; }
-    .settings-btn:hover { background: rgba(255,255,255,0.12); }
+    .btn { background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--text); padding: 7px 14px; border-radius: 8px; cursor: pointer; font-size: 0.82rem; font-weight: 600; transition: all 0.2s; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
+    .btn:hover { background: rgba(255,255,255,0.12); }
+    .btn-primary { background: #0284c7; color: #fff; border-color: #0369a1; }
+    .btn-primary:hover { background: #0369a1; }
+    .btn-danger { background: rgba(244,63,94,0.15); color: var(--red); border-color: rgba(244,63,94,0.3); }
+    .btn-danger:hover { background: rgba(244,63,94,0.3); }
     .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); backdrop-filter: blur(5px); justify-content: center; align-items: center; z-index: 100; }
     .modal-box { background: #1e293b; border: 1px solid var(--border); border-radius: 16px; padding: 24px; width: 90%; max-width: 400px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); }
     .modal-box h3 { margin-bottom: 16px; font-size: 1.2rem; }
@@ -58,8 +63,6 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     .input-group label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 6px; }
     .input-group input { width: 100%; padding: 10px; border-radius: 8px; background: #0f172a; border: 1px solid var(--border); color: #fff; font-size: 1rem; }
     .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
-    .btn-save { background: var(--accent); color: #000; border: none; padding: 8px 18px; border-radius: 8px; font-weight: 700; cursor: pointer; }
-    .btn-cancel { background: transparent; color: var(--muted); border: 1px solid var(--border); padding: 8px 16px; border-radius: 8px; cursor: pointer; }
     footer { text-align: center; color: var(--muted); font-size: 0.8rem; margin-top: 20px; }
   </style>
 </head>
@@ -70,9 +73,12 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         <h1>Chint DDSU666 Modbus Master</h1>
         <p>Seeed Studio XIAO ESP32-S3 &bull; Ultra-Fast Polling &bull; WebSocket Stream</p>
       </div>
-      <div style="display:flex; align-items:center; gap:10px;">
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+        <span id="badge-stream" class="badge badge-stream">⚡ LIVE WS (15Hz)</span>
         <span id="badge-meter" class="badge badge-offline">Meter Offline</span>
-        <button class="settings-btn" onclick="openModal()">Settings</button>
+        <button class="btn" onclick="openModal()">⚙️ Slave ID</button>
+        <a href="/update" class="btn btn-primary">📦 OTA</a>
+        <button class="btn btn-danger" onclick="rebootDevice()">↺ Reboot</button>
       </div>
     </header>
 
@@ -113,7 +119,7 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     </div>
 
     <div class="card">
-      <div class="card-label" style="margin-bottom:12px;">Diagnostics & Modbus Bus Health</div>
+      <div class="card-label" style="margin-bottom:12px;">Diagnostics &amp; Modbus Bus Health</div>
       <div class="diag-box">
         <div class="diag-row">
           <span class="diag-label">Modbus Polling Speed</span>
@@ -143,7 +149,7 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     </div>
 
     <footer>
-      Chint DDSU666 Modbus RTU Reader &bull; WebSocket Server on Port 81 &bull; <a href="/update" style="color:var(--accent); text-decoration:none;">Firmware Update (OTA)</a>
+      Chint DDSU666 Modbus RTU Reader &bull; WebSocket Stream on Port 81 &bull; Health API: <a href="/health" style="color:var(--accent); text-decoration:none;">/health</a>
     </footer>
   </div>
 
@@ -151,26 +157,47 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     <div class="modal-box">
       <h3>Modbus Settings</h3>
       <div class="input-group">
-        <label>Chint DDSU666 Slave ID (Default 1)</label>
-        <input type="number" id="input-slave" min="1" max="247" value="1">
+        <label>Chint DDSU666 Slave ID (Default 2 on this site)</label>
+        <input type="number" id="input-slave" min="1" max="247" value="2">
       </div>
       <div class="modal-actions">
-        <button class="btn-cancel" onclick="closeModal()">Cancel</button>
-        <button class="btn-save" onclick="saveSettings()">Save & Apply</button>
+        <button class="btn" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveSettings()">Save &amp; Apply</button>
       </div>
     </div>
   </div>
 
   <script>
-    let ws;
+    let ws = null;
+    let wsTimer = null;
     const wsUrl = 'ws://' + window.location.hostname + ':81/';
     document.getElementById('val-ws-url').innerText = wsUrl;
 
+    function setStreamStatus(live) {
+      const badge = document.getElementById('badge-stream');
+      if (live) {
+        badge.innerText = '⚡ LIVE WS (15Hz)';
+        badge.className = 'badge badge-stream';
+      } else {
+        badge.innerText = '⏱ HTTP POLL (2s)';
+        badge.className = 'badge';
+        badge.style = 'background:rgba(245,158,11,0.2); color:var(--amber); border:1px solid rgba(245,158,11,0.4);';
+      }
+    }
+
     function connectWS() {
-      ws = new WebSocket(wsUrl);
+      try {
+        ws = new WebSocket(wsUrl);
+      } catch(e) {
+        setStreamStatus(false);
+        return;
+      }
+
       ws.onopen = () => {
-        console.log('Connected to WebSocket server');
+        setStreamStatus(true);
+        if (wsTimer) { clearTimeout(wsTimer); wsTimer = null; }
       };
+
       ws.onmessage = (e) => {
         try {
           const data = JSON.parse(e.data);
@@ -179,25 +206,31 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
           }
         } catch(err) {}
       };
+
       ws.onclose = () => {
-        setTimeout(connectWS, 1500);
+        setStreamStatus(false);
+        if (!wsTimer) {
+          wsTimer = setTimeout(() => { wsTimer = null; connectWS(); }, 2500);
+        }
       };
+
       ws.onerror = (err) => {
+        setStreamStatus(false);
         ws.close();
       };
     }
 
     function updateUI(d) {
-      document.getElementById('val-watts').innerText = d.watts.toFixed(1);
-      document.getElementById('val-volts').innerText = d.volts.toFixed(1);
-      document.getElementById('val-amps').innerText = d.amps.toFixed(2);
-      document.getElementById('val-pf').innerText = d.pf.toFixed(2);
-      document.getElementById('val-freq').innerText = d.freq.toFixed(1);
-      document.getElementById('val-imp').innerText = d.import_kwh.toFixed(2);
-      document.getElementById('val-exp').innerText = d.export_kwh.toFixed(2);
-      document.getElementById('val-hz').innerText = d.poll_hz.toFixed(1);
-      document.getElementById('val-lat').innerText = d.latency_ms.toFixed(1);
-      document.getElementById('val-slave').innerText = d.slave_id;
+      if (d.watts !== undefined) document.getElementById('val-watts').innerText = d.watts.toFixed(1);
+      if (d.volts !== undefined) document.getElementById('val-volts').innerText = d.volts.toFixed(1);
+      if (d.amps !== undefined) document.getElementById('val-amps').innerText = d.amps.toFixed(2);
+      if (d.pf !== undefined) document.getElementById('val-pf').innerText = d.pf.toFixed(2);
+      if (d.freq !== undefined) document.getElementById('val-freq').innerText = d.freq.toFixed(1);
+      if (d.import_kwh !== undefined) document.getElementById('val-imp').innerText = d.import_kwh.toFixed(2);
+      if (d.export_kwh !== undefined) document.getElementById('val-exp').innerText = d.export_kwh.toFixed(2);
+      if (d.poll_hz !== undefined) document.getElementById('val-hz').innerText = d.poll_hz.toFixed(1);
+      if (d.latency_ms !== undefined) document.getElementById('val-lat').innerText = d.latency_ms.toFixed(1);
+      if (d.slave_id !== undefined) document.getElementById('val-slave').innerText = d.slave_id;
 
       const meterBadge = document.getElementById('badge-meter');
       if (d.meter_online) {
@@ -226,9 +259,9 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
       fetch('/health')
         .then(r => r.json())
         .then(data => {
-          document.getElementById('val-clients').innerText = data.websocket.clients;
-          document.getElementById('val-uptime').innerText = data.uptime_sec;
-          document.getElementById('val-rssi').innerText = data.wifi.rssi;
+          if (data.websocket) document.getElementById('val-clients').innerText = data.websocket.clients;
+          if (data.uptime_sec !== undefined) document.getElementById('val-uptime').innerText = data.uptime_sec;
+          if (data.wifi && data.wifi.rssi !== undefined) document.getElementById('val-rssi').innerText = data.wifi.rssi;
           if (!ws || ws.readyState !== WebSocket.OPEN) {
             updateUI({
               watts: data.telemetry.watts,
@@ -238,8 +271,8 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
               freq: data.telemetry.freq,
               import_kwh: data.telemetry.import_kwh,
               export_kwh: data.telemetry.export_kwh,
-              poll_hz: data.modbus.query_rate_hz,
-              latency_ms: data.modbus.response_latency_ms,
+              poll_hz: data.modbus.rate_hz,
+              latency_ms: data.modbus.latency_ms,
               meter_online: data.modbus.meter_online,
               slave_id: data.modbus.slave_id
             });
@@ -250,20 +283,41 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     function openModal() {
       document.getElementById('settings-modal').style.display = 'flex';
       fetch('/health').then(r=>r.json()).then(d=>{
-        document.getElementById('input-slave').value = d.modbus.slave_id;
+        if (d.modbus && d.modbus.slave_id) {
+          document.getElementById('input-slave').value = d.modbus.slave_id;
+        }
       });
     }
+
     function closeModal() {
       document.getElementById('settings-modal').style.display = 'none';
     }
+
     function saveSettings() {
       const slave = parseInt(document.getElementById('input-slave').value);
-      fetch('/api/settings?slave=' + slave, { method: 'POST' })
-        .then(r => r.json())
-        .then(d => {
-          closeModal();
-          pollHealth();
-        });
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ action: 'set_slave', slave: slave }));
+        closeModal();
+        setTimeout(pollHealth, 500);
+      } else {
+        fetch('/api/settings?slave=' + slave, { method: 'POST' })
+          .then(r => r.json())
+          .then(d => {
+            closeModal();
+            pollHealth();
+          }).catch(e => closeModal());
+      }
+    }
+
+    function rebootDevice() {
+      if (!confirm('Reboot the Chint Reader device?')) return;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ action: 'reboot' }));
+      } else {
+        fetch('/reboot', { method: 'POST' });
+      }
+      alert('Device rebooting... reloading page in 6s');
+      setTimeout(() => location.reload(), 6000);
     }
 
     connectWS();

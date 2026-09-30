@@ -1,10 +1,9 @@
 #include "websocket_server_mgr.h"
 #include <WiFi.h>
 
-extern DDSU666Master g_ddsu666; // Global master reference for handling RPC queries
-
-WebSocketServerManager::WebSocketServerManager(uint16_t port)
-  : _ws(port),
+WebSocketServerManager::WebSocketServerManager(IChintMeterReader &reader, uint16_t port)
+  : _reader(reader),
+    _ws(port),
     _port(port),
     _clientCount(0),
     _packetsBroadcast(0),
@@ -22,6 +21,41 @@ void WebSocketServerManager::loop() {
   _ws.loop();
 }
 
+void WebSocketServerManager::sendWelcomePacket(uint8_t num) {
+  ChintTelemetry data = _reader.getTelemetry();
+  ModbusMasterStats stats = _reader.getStats();
+
+  snprintf(_jsonBuffer, sizeof(_jsonBuffer),
+    "{"
+      "\"type\":\"welcome\","
+      "\"device\":\"Chint DDSU666 Modbus Master\","
+      "\"watts\":%.1f,"
+      "\"volts\":%.1f,"
+      "\"amps\":%.2f,"
+      "\"pf\":%.2f,"
+      "\"freq\":%.1f,"
+      "\"import_kwh\":%.2f,"
+      "\"export_kwh\":%.2f,"
+      "\"poll_hz\":%.1f,"
+      "\"latency_ms\":%.1f,"
+      "\"meter_online\":%s,"
+      "\"slave_id\":%u"
+    "}",
+    data.active_power,
+    data.voltage,
+    data.current,
+    data.power_factor,
+    data.frequency,
+    data.import_kwh,
+    data.export_kwh,
+    stats.query_rate_hz,
+    stats.response_latency_ms,
+    stats.meter_online ? "true" : "false",
+    stats.slave_id
+  );
+  _ws.sendTXT(num, _jsonBuffer);
+}
+
 void WebSocketServerManager::onEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length) {
   switch (type) {
     case WStype_DISCONNECTED:
@@ -36,38 +70,7 @@ void WebSocketServerManager::onEvent(uint8_t num, WStype_t type, uint8_t *payloa
                     num, ip.toString().c_str(), _clientCount);
 
       // Immediately send welcome packet with current telemetry
-      ChintTelemetry data = g_ddsu666.getTelemetry();
-      ModbusMasterStats stats = g_ddsu666.getStats();
-
-      snprintf(_jsonBuffer, sizeof(_jsonBuffer),
-        "{"
-          "\"type\":\"welcome\","
-          "\"device\":\"Chint DDSU666 Modbus Master\","
-          "\"watts\":%.1f,"
-          "\"volts\":%.1f,"
-          "\"amps\":%.2f,"
-          "\"pf\":%.2f,"
-          "\"freq\":%.1f,"
-          "\"import_kwh\":%.2f,"
-          "\"export_kwh\":%.2f,"
-          "\"poll_hz\":%.1f,"
-          "\"latency_ms\":%.1f,"
-          "\"meter_online\":%s,"
-          "\"slave_id\":%u"
-        "}",
-        data.active_power,
-        data.voltage,
-        data.current,
-        data.power_factor,
-        data.frequency,
-        data.import_kwh,
-        data.export_kwh,
-        stats.query_rate_hz,
-        stats.response_latency_ms,
-        stats.meter_online ? "true" : "false",
-        stats.slave_id
-      );
-      _ws.sendTXT(num, _jsonBuffer);
+      sendWelcomePacket(num);
       break;
     }
 
@@ -83,20 +86,37 @@ void WebSocketServerManager::onEvent(uint8_t num, WStype_t type, uint8_t *payloa
 }
 
 void WebSocketServerManager::handleClientMessage(uint8_t num, const uint8_t *payload, size_t length) {
-  StaticJsonDocument<256> doc;
+  StaticJsonDocument<384> doc;
   DeserializationError err = deserializeJson(doc, payload, length);
   if (err) return;
 
+  // 1. Action commands from Web UI
+  const char *action = doc["action"] | "";
+  if (strlen(action) > 0) {
+    if (strcmp(action, "set_slave") == 0) {
+      uint8_t id = doc["slave"] | 1;
+      if (id >= 1 && id <= 247) {
+        _reader.setSlaveId(id);
+        _ws.sendTXT(num, "{\"status\":\"OK\",\"action\":\"set_slave\"}");
+      }
+    } else if (strcmp(action, "reboot") == 0) {
+      _ws.sendTXT(num, "{\"status\":\"OK\",\"action\":\"reboot\",\"msg\":\"Rebooting...\"}");
+      delay(200);
+      ESP.restart();
+    }
+    return;
+  }
+
+  // 2. Shelly RPC Protocol Handling
   int id = doc["id"] | 0;
   const char *method = doc["method"] | "";
-
   if (strlen(method) > 0) {
     sendShellyRpcResponse(num, id, method);
   }
 }
 
 void WebSocketServerManager::sendShellyRpcResponse(uint8_t num, int reqId, const char *method) {
-  ChintTelemetry data = g_ddsu666.getTelemetry();
+  ChintTelemetry data = _reader.getTelemetry();
 
   if (strcmp(method, "Shelly.GetStatus") == 0 || strcmp(method, "EM1.GetStatus") == 0) {
     // Exact Shelly Pro EM RPC response format
@@ -159,7 +179,7 @@ void WebSocketServerManager::broadcastTelemetry(const ChintTelemetry &data, cons
   uint32_t now = millis();
   _lastBroadcastTime = now;
 
-  // 1. Broadcast Clean Stream JSON
+  // 1. Broadcast Clean Stream JSON (consumed by dashboard and emulator)
   snprintf(_jsonBuffer, sizeof(_jsonBuffer),
     "{"
       "\"type\":\"telemetry\","
