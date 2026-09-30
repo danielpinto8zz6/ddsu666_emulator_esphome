@@ -31,7 +31,7 @@ void ChintWebServer::loop() {
 
 void ChintWebServer::handleRoot() {
   _server.sendHeader("Connection", "keep-alive");
-  _server.send_P(200, "text/html", CHINT_DASHBOARD_HTML);
+  _server.send_P(200, "text/html; charset=utf-8", CHINT_DASHBOARD_HTML);
 }
 
 void ChintWebServer::handleHealthJson() {
@@ -109,22 +109,32 @@ void ChintWebServer::handleReboot() {
 void ChintWebServer::setupOtaRoutes() {
   // Web OTA Upload Form
   _server.on("/update", HTTP_GET, [this]() {
-    _server.send(200, "text/html",
-      "<!DOCTYPE html><html><head><title>Chint Reader OTA</title>"
+    _server.send(200, "text/html; charset=utf-8",
+      "<!DOCTYPE html><html lang='en'><head>"
+      "<meta charset='utf-8'>"
       "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-      "<style>body{font-family:sans-serif;background:#0f172a;color:#eee;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;}"
-      ".card{background:#1e293b;padding:32px;border-radius:12px;border:1px solid rgba(255,255,255,0.1);text-align:center;box-shadow:0 8px 24px rgba(0,0,0,0.4);max-width:360px;width:90%;}"
-      "input,button{margin-top:16px;padding:10px 16px;border-radius:8px;border:none;font-size:1rem;width:100%;box-sizing:border-box;}"
-      "button{background:#10b981;color:#fff;cursor:pointer;font-weight:bold;}"
-      "a{color:#38bdf8;text-decoration:none;font-size:0.85rem;display:inline-block;margin-top:14px;}"
+      "<title>Chint Reader OTA Update</title>"
+      "<style>"
+      ":root { --bg: #0f172a; --card-bg: #1e293b; --accent: #38bdf8; --green: #10b981; --border: rgba(255,255,255,0.1); --text: #f8fafc; --muted: #94a3b8; }"
+      "* { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }"
+      "body { background: var(--bg); color: var(--text); display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 20px; }"
+      ".card { background: var(--card-bg); padding: 32px; border-radius: 16px; border: 1px solid var(--border); text-align: center; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.5); max-width: 400px; width: 100%; }"
+      "h2 { font-size: 1.3rem; margin-bottom: 8px; }"
+      "p { font-size: 0.85rem; color: var(--muted); margin-bottom: 20px; }"
+      "input[type=file] { width: 100%; padding: 10px; background: rgba(0,0,0,0.2); border: 1px dashed var(--border); border-radius: 8px; color: var(--muted); font-size: 0.85rem; cursor: pointer; }"
+      "button { margin-top: 16px; width: 100%; padding: 12px; border-radius: 8px; border: none; background: #0284c7; color: #fff; font-weight: 700; font-size: 0.95rem; cursor: pointer; transition: background 0.2s; }"
+      "button:hover { background: #0369a1; }"
+      "a { display: inline-block; margin-top: 16px; color: var(--accent); text-decoration: none; font-size: 0.85rem; }"
+      "a:hover { text-decoration: underline; }"
       "</style></head><body>"
       "<div class='card'>"
       "<h2>📦 Chint Reader OTA Update</h2>"
+      "<p>Upload a compiled firmware (.bin) to update Seeed Studio XIAO ESP32-S3 wirelessly.</p>"
       "<form method='POST' action='/update' enctype='multipart/form-data'>"
       "<input type='file' name='file' accept='.bin' required><br>"
-      "<button type='submit'>Upload & Flash</button>"
+      "<button type='submit'>Upload &amp; Flash Firmware</button>"
       "</form>"
-      "<a href='/'>&larr; Back to Dashboard</a>"
+      "<a href='/'>&larr; Back to Live Dashboard</a>"
       "</div></body></html>");
   });
 
