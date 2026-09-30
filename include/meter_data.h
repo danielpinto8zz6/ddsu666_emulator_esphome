@@ -3,7 +3,6 @@
 #include <Arduino.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/portmacro.h>
-#include <Preferences.h>
 
 struct MeterTelemetry {
   float voltage;          // V
@@ -36,14 +35,6 @@ public:
 
 private:
   static portMUX_TYPE spinlock;
-  static Preferences prefs;
   static MeterTelemetry grid;
   static MeterTelemetry pv;
-
-  static float lastSavedGridImport;
-  static float lastSavedGridExport;
-  static float lastSavedPvYield;
-
-  static uint32_t lastGridSaveTime;
-  static uint32_t lastPvSaveTime;
 };

@@ -1,0 +1,269 @@
+# ================================================================
+# Sonoff POWCT (POW Ring) - ESPHome Configuration
+# Based on mazkagaz/sonoff_powct_esphome with Blackout-Proof ESP-NOW Link
+# Target Device IP: 10.0.0.124
+# Xiao Receiver MAC: E0:72:A1:F9:89:D8
+# ================================================================
+
+esphome:
+  name: sonoff-powct
+  friendly_name: my Sonoff POWCT
+  includes:
+    - powct_espnow.h
+  on_boot:
+    priority: 300
+    then:
+      - lambda: |-
+          if (esp_now_init() == ESP_OK) {
+            esp_now_peer_info_t peer = {};
+            peer.channel = 0;
+            peer.encrypt = false;
+            static const uint8_t mac[6] = {0xE0, 0x72, 0xA1, 0xF9, 0x89, 0xD8};
+            memcpy(peer.peer_addr, mac, 6);
+            esp_now_add_peer(&peer);
+            ESP_LOGI("esp_now", "ESP-NOW Initialized with Xiao peer (E0:72:A1:F9:89:D8)");
+          }
+
+esp32:
+  board: nodemcu-32s
+  framework:
+    type: esp-idf
+
+preferences:
+  flash_write_interval: 1h
+
+logger:
+  level: INFO
+
+api:
+  encryption:
+    key: "8yGZBicUMAe0IuWwBbdyMSlxHZGuWZaeaXJKKgaBm40="
+  reboot_timeout: 0s # Blackout protection: prevent reboot when router is off
+  homeassistant_services: True
+  services:
+    - service: read_register
+      variables:
+        register_number: string
+        size: int
+      then:
+        - lambda: |-
+            id(cse7761_comp).read_register_service(register_number, size);
+    - service: write_register
+      variables:
+        register_number: string
+        regiter_value: string
+      then:
+        - lambda: |-
+            id(cse7761_comp).write_register_service(register_number, regiter_value);
+
+ota:
+  - platform: esphome
+  - platform: web_server
+
+# Blackout Resilience: Prevent reboot loop when Wi-Fi router is offline during a power outage
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  reboot_timeout: 0s
+  power_save_mode: none
+
+web_server:
+  log: false
+  local: true
+  version: 3
+
+captive_portal:
+
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+
+# Mazkagaz custom CSE7761 component (handles calibration, bidirectional signed power)
+external_components:
+  - source: github://mazkagaz/sonoff_powct_esphome
+    components: [cse7761]
+
+uart:
+  tx_pin: GPIO26
+  rx_pin: GPIO25
+  baud_rate: 38400
+  parity: EVEN
+  stop_bits: 1
+
+# Debug text_sensor : cse7761 register access
+text_sensor:
+  - platform: template
+    id: lecture_registre_debug_hex
+    name: "CSE7761 Lecture Registre (hexa)"
+    entity_category: diagnostic
+  - platform: template
+    id: lecture_registre_debug_bin
+    name: "CSE7761 Lecture Registre (binaire)"
+    entity_category: diagnostic
+
+sensor:
+  - platform: cse7761
+    id: cse7761_comp
+    update_interval: 1s
+    debug_sensor_hex_id: lecture_registre_debug_hex
+    debug_sensor_bin_id: lecture_registre_debug_bin
+    voltage:
+      name: Voltage
+      id: v_sensor
+      icon: mdi:sine-wave
+    current_1:
+      name: Current A
+      id: a_sensor_1
+      accuracy_decimals: 3
+      icon: mdi:current-ac
+    active_power_1:
+      name: Power A
+      id: w_sensor_1
+      icon: mdi:flash
+      on_value:
+        then:
+          - lambda: |-
+              // Binary 9-byte packet to Xiao Emulator (Slave ID 1):
+              // Byte 0: 0xD6 (PV Solar Packet identifier)
+              // Byte 1-4: float watts
+              // Byte 5-8: float yield_kwh
+              struct __attribute__((packed)) {
+                uint8_t magic;
+                float watts;
+                float yield_kwh;
+              } pkt;
+
+              pkt.magic = 0xD6;
+              pkt.watts = x; // Instantaneous power measured by CT clamp
+              pkt.yield_kwh = id(E_received).has_state() ? id(E_received).state : 0.0f;
+
+              static const uint8_t xiao_mac[6] = {0xE0, 0x72, 0xA1, 0xF9, 0x89, 0xD8};
+              esp_now_send(xiao_mac, (const uint8_t*)&pkt, sizeof(pkt));
+      on_value_range:
+        - above: 4.0
+          then:
+            - light.turn_on: switch_led
+        - below: 3.0
+          then:
+            - light.turn_off: switch_led
+    energy_received:
+      name: Energy received
+      id: E_received
+      icon: mdi:lightning-bolt
+      accuracy_decimals: 3
+      state_class: total_increasing
+    energy_exported:
+      name: Energy exported
+      id: E_exported
+      icon: mdi:lightning-bolt
+      accuracy_decimals: 3
+      state_class: total_increasing
+
+  - platform: internal_temperature
+    name: ESP32 Internal Temp
+    id: esp32_temp
+    update_interval: 60s
+
+  - platform: template
+    name: Power Factor
+    device_class: power_factor
+    id: power_factor
+    icon: mdi:angle-acute
+    lambda: |-
+      if (id(v_sensor).state > 0 && id(a_sensor_1).state > 0) {
+        return id(w_sensor_1).state / (id(v_sensor).state * id(a_sensor_1).state);
+      }
+      return 1.0f;
+
+binary_sensor:
+  - platform: gpio
+    pin: GPIO00
+    id: reset
+    internal: true
+    filters:
+      - invert:
+      - delayed_off: 10ms
+    on_click:
+      - max_length: 350ms
+        then:
+          switch.toggle: relay_1
+      - min_length: 360ms
+        max_length: 3s
+        then:
+          - if:
+              condition:
+                binary_sensor.is_on: page
+              then:
+                binary_sensor.template.publish:
+                  id: page
+                  state: OFF
+              else:
+                binary_sensor.template.publish:
+                  id: page
+                  state: ON
+  - platform: template
+    id: page
+    publish_initial_state: true
+    internal: true
+
+# Front LCD Display (TM1621)
+display:
+  platform: tm1621
+  id: tm1621_display
+  cs_pin: GPIO17
+  data_pin: GPIO05
+  read_pin: GPIO23
+  write_pin: GPIO18
+  lambda: |-
+    if (id(page).state) {
+      it.display_voltage(true);
+      it.display_kwh(false);
+      it.printf(0, "%.1f", id(v_sensor).state);
+      it.printf(1, "%.1f", id(a_sensor_1).state);
+    } else {  
+      it.display_voltage(false);
+      it.display_kwh(true);
+      it.printf(0, "%.1f", id(E_received).state);
+      it.printf(1, "%.1f", id(w_sensor_1).state);
+    }
+
+output:
+  - platform: ledc
+    id: led
+    pin:
+      number: GPIO13
+      inverted: False
+
+switch:
+  - platform: template
+    name: CSE7761 Calibration Mode
+    id: cse7761_calibration_switch
+    icon: mdi:ruler
+    optimistic: true
+    turn_on_action:
+      - lambda: 'id(cse7761_comp).set_calibration_mode(true);'
+    turn_off_action:
+      - lambda: 'id(cse7761_comp).set_calibration_mode(false);'
+  - platform: gpio
+    name: Relay
+    pin: GPIO21
+    id: relay_1
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      - delay: 500ms
+      - light.turn_on: switch_led
+    on_turn_off:
+      - delay: 500ms
+      - light.turn_off: switch_led
+
+light:
+  - platform: monochromatic
+    id: switch_led
+    output: led
+    internal: True
+  - platform: status_led
+    id: wifi_status_led
+    internal: True
+    pin:
+      number: GPIO15
+      inverted: True

@@ -52,8 +52,12 @@ ModbusRTUServer::ModbusRTUServer()
     _enabled(true),
     _rxLen(0),
     _queryCount(0),
+    _queryCountGrid(0),
+    _queryCountPv(0),
     _crcErrorCount(0),
     _lastQueryTime(0),
+    _lastGridQueryTime(0),
+    _lastPvQueryTime(0),
     _lastRateCalcTime(0),
     _queriesAtLastCalc(0),
     _queryRateHz(0.0f) {}
@@ -261,6 +265,13 @@ void ModbusRTUServer::processFrame(const uint8_t *frame, size_t length) {
 
   _queryCount++;
   _lastQueryTime = millis();
+  if (slaveId == MODBUS_SLAVE_GRID) {
+    _queryCountGrid++;
+    _lastGridQueryTime = _lastQueryTime;
+  } else {
+    _queryCountPv++;
+    _lastPvQueryTime = _lastQueryTime;
+  }
   sendResponse(response, respIdx);
 }
 

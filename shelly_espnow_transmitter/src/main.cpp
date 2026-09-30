@@ -60,6 +60,8 @@ static void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 
 static bool s_espNowInitialized = false;
 
+static const uint8_t s_bcastMac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
 static void initEspNow() {
   if (s_espNowReady) return;
 
@@ -68,7 +70,6 @@ static void initEspNow() {
     if (err == ESP_OK || err == ESP_ERR_ESPNOW_INTERNAL) {
       s_espNowInitialized = true;
       esp_now_register_send_cb(onDataSent);
-      esp_wifi_config_espnow_rate(WIFI_IF_STA, WIFI_PHY_RATE_1M_L);
     } else {
       Serial.printf("[ESP-NOW] Error: esp_now_init failed! (0x%X)\n", err);
       s_espNowReady = false;
@@ -76,34 +77,30 @@ static void initEspNow() {
     }
   }
 
-  if (USE_BROADCAST) {
-    memset(s_targetMac, 0xFF, 6);
-  } else {
-    memcpy(s_targetMac, LILYGO_MAC, 6);
+  // Register unicast target peer (Receiver XIAO S3)
+  if (!esp_now_is_peer_exist(LILYGO_MAC)) {
+    esp_now_peer_info_t unicastPeer = {};
+    memcpy(unicastPeer.peer_addr, LILYGO_MAC, 6);
+    unicastPeer.channel = 0;
+    unicastPeer.ifidx = WIFI_IF_STA;
+    unicastPeer.encrypt = false;
+    esp_now_add_peer(&unicastPeer);
   }
 
-  // Remove existing peer if present so re-adding never fails with ESP_ERR_ESPNOW_EXIST
-  if (esp_now_is_peer_exist(s_targetMac)) {
-    esp_now_del_peer(s_targetMac);
-  }
-
-  memset(&s_peerInfo, 0, sizeof(s_peerInfo));
-  memcpy(s_peerInfo.peer_addr, s_targetMac, 6);
-  s_peerInfo.channel = 0; // 0 = follow current STA channel dynamically
-  s_peerInfo.ifidx = WIFI_IF_STA;
-  s_peerInfo.encrypt = false;
-
-  esp_err_t peerErr = esp_now_add_peer(&s_peerInfo);
-  if (peerErr != ESP_OK && peerErr != ESP_ERR_ESPNOW_EXIST) {
-    Serial.printf("[ESP-NOW] Error: esp_now_add_peer failed! (0x%X)\n", peerErr);
-    s_espNowReady = false;
-    return;
+  // Register broadcast peer
+  if (!esp_now_is_peer_exist(s_bcastMac)) {
+    esp_now_peer_info_t bcastPeer = {};
+    memcpy(bcastPeer.peer_addr, s_bcastMac, 6);
+    bcastPeer.channel = 0;
+    bcastPeer.ifidx = WIFI_IF_STA;
+    bcastPeer.encrypt = false;
+    esp_now_add_peer(&bcastPeer);
   }
 
   s_espNowReady = true;
-  Serial.printf("[ESP-NOW] Peer configured! Target: %02X:%02X:%02X:%02X:%02X:%02X on Channel %d\n",
-                s_targetMac[0], s_targetMac[1], s_targetMac[2],
-                s_targetMac[3], s_targetMac[4], s_targetMac[5],
+  Serial.printf("[ESP-NOW] Peers configured! Unicast: %02X:%02X:%02X:%02X:%02X:%02X & Broadcast on Channel %d\n",
+                LILYGO_MAC[0], LILYGO_MAC[1], LILYGO_MAC[2],
+                LILYGO_MAC[3], LILYGO_MAC[4], LILYGO_MAC[5],
                 WiFi.channel());
 }
 
@@ -123,7 +120,13 @@ static void transmitEspNow(float watts, float voltage, float current, float pf, 
   pkt.frequency = freq;
   pkt.energy_kwh = energyKwh;
 
-  esp_err_t err = esp_now_send(s_targetMac, (const uint8_t *)&pkt, sizeof(pkt));
+  // 1. Send targeted unicast to receiver XIAO
+  esp_err_t err = esp_now_send(LILYGO_MAC, (const uint8_t *)&pkt, sizeof(pkt));
+
+  // 2. Send broadcast frame with slight delay
+  delayMicroseconds(1000);
+  esp_now_send(s_bcastMac, (const uint8_t *)&pkt, sizeof(pkt));
+
   s_packetsSent++;
   s_lastEspNowTxTime = millis();
 #ifdef STATUS_LED_PIN
@@ -135,6 +138,7 @@ static void transmitEspNow(float watts, float voltage, float current, float pf, 
     Serial.printf("[ESP-NOW] Send error code: 0x%X\n", err);
   }
 }
+
 
 static void handleShellyJson(const uint8_t *payload, size_t length) {
   static StaticJsonDocument<256> filter;
@@ -285,13 +289,15 @@ static void handleHealthJson() {
 
   char targetMacStr[18];
   snprintf(targetMacStr, sizeof(targetMacStr), "%02X:%02X:%02X:%02X:%02X:%02X",
-           s_targetMac[0], s_targetMac[1], s_targetMac[2],
-           s_targetMac[3], s_targetMac[4], s_targetMac[5]);
+           LILYGO_MAC[0], LILYGO_MAC[1], LILYGO_MAC[2],
+           LILYGO_MAC[3], LILYGO_MAC[4], LILYGO_MAC[5]);
 
   snprintf(s_jsonBuffer, sizeof(s_jsonBuffer),
     "{"
       "\"status\":\"%s\","
-#if defined(BOARD_ESP32C3_SUPERMINI)
+#if defined(BOARD_XIAO_ESP32S3)
+      "\"device\":\"Seeed Studio XIAO ESP32-S3 Bridge\","
+#elif defined(BOARD_ESP32C3_SUPERMINI)
       "\"device\":\"ESP32-C3 SuperMini Bridge\","
 #else
       "\"device\":\"ESP32-C3 Transmitter Bridge\","
@@ -341,15 +347,7 @@ static void handleRoot() {
 static bool s_otaAuthorized = false;
 
 static bool isOtaAuthorized() {
-#ifndef OTA_PASSWORD
   return true;
-#else
-  if (strlen(OTA_PASSWORD) == 0) return true;
-  if (s_server.authenticate("admin", OTA_PASSWORD)) return true;
-  if (s_server.hasArg("password") && s_server.arg("password") == OTA_PASSWORD) return true;
-  if (s_server.hasHeader("X-OTA-Password") && s_server.header("X-OTA-Password") == OTA_PASSWORD) return true;
-  return false;
-#endif
 }
 
 static void initWebServer() {
@@ -366,21 +364,14 @@ static void initWebServer() {
   });
 
   s_server.on("/reboot", HTTP_POST, []() {
-    if (!isOtaAuthorized()) return s_server.requestAuthentication();
     s_server.sendHeader("Connection", "close");
     s_server.send(200, "text/plain", "Rebooting...");
     delay(500);
     ESP.restart();
   });
 
-  // Wireless Web Browser OTA route (Protected with OTA_PASSWORD)
+  // Wireless Web Browser OTA route (Passwordless)
   s_server.on("/update", HTTP_POST, []() {
-    if (!isOtaAuthorized() || !s_otaAuthorized) {
-      s_otaAuthorized = false;
-      s_server.sendHeader("Connection", "close");
-      return s_server.requestAuthentication();
-    }
-    s_otaAuthorized = false;
     s_server.sendHeader("Connection", "close");
     if (Update.hasError()) {
       s_server.send(500, "text/plain", "FAIL");
@@ -393,22 +384,15 @@ static void initWebServer() {
     if (!s_server.isUploadActive()) return;
     HTTPUpload& upload = s_server.upload();
     if (upload.status == UPLOAD_FILE_START) {
-      s_otaAuthorized = isOtaAuthorized();
-      if (!s_otaAuthorized) {
-        Serial.println("\n[Web OTA] Unauthorized upload attempt blocked!");
-        return;
-      }
-      Serial.printf("\n[Web OTA] Authorized upload starting: %s\n", upload.filename.c_str());
+      Serial.printf("\n[Web OTA] Upload starting: %s\n", upload.filename.c_str());
       if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
         Update.printError(Serial);
       }
     } else if (upload.status == UPLOAD_FILE_WRITE) {
-      if (!s_otaAuthorized) return;
       if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
         Update.printError(Serial);
       }
     } else if (upload.status == UPLOAD_FILE_END) {
-      if (!s_otaAuthorized) return;
       if (Update.end(true)) {
         Serial.printf("\n[Web OTA] Finished: %u bytes. Rebooting...\n", upload.totalSize);
       } else {
@@ -427,10 +411,14 @@ void setup() {
   delay(1000);
 
   Serial.println("\n==================================================");
-#if defined(BOARD_ESP32C3_SUPERMINI)
+#if defined(BOARD_XIAO_ESP32C3)
+  Serial.println(" Seeed Studio XIAO ESP32-C3: Shelly WS -> ESP-NOW Bridge");
+#elif defined(BOARD_XIAO_ESP32S3)
+  Serial.println(" Seeed Studio XIAO ESP32-S3: Shelly WS -> ESP-NOW Bridge");
+#elif defined(BOARD_ESP32C3_SUPERMINI)
   Serial.println(" ESP32-C3 SuperMini: Shelly WS -> ESP-NOW Bridge");
 #else
-  Serial.println(" ESP32-C3: Shelly WS -> ESP-NOW Bridge");
+  Serial.println(" ESP32: Shelly WS -> ESP-NOW Bridge");
 #endif
   Serial.println(" Direct Zero-Latency Bridge to Lilygo DDSU666");
   Serial.println("==================================================");
@@ -444,6 +432,8 @@ void setup() {
   WiFi.setAutoReconnect(true);
   WiFi.setSleep(false);
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
+  esp_wifi_set_max_tx_power(84); // 84 = 21dBm / max hardware ceiling
+
 
   Serial.printf("[WiFi] Connecting to %s...\n", WIFI_SSID);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);

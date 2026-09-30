@@ -6,10 +6,8 @@
 #include <Update.h>
 #include <esp_task_wdt.h>
 #include <cmath>
+#include <Preferences.h>
 
-#if ENABLE_ESPNOW
-#include "esp_now_receiver.h"
-#endif
 
 class SafeWebServer : public WebServer {
 public:
@@ -22,6 +20,8 @@ static SafeWebServer s_server(80);
 static ModbusRTUServer *s_modbus = nullptr;
 static MQTTManager     *s_mqtt   = nullptr;
 static char s_jsonBuffer[1024];
+volatile bool g_isUpdatingFirmware = false;
+extern volatile UBaseType_t g_networkTaskStackHWM;  // set in main.cpp
 
 static inline float round1(float v) { return std::round(v * 10.0f) / 10.0f; }
 static inline float round2(float v) { return std::round(v * 100.0f) / 100.0f; }
@@ -32,15 +32,11 @@ static void handleHealthJson() {
 
   uint32_t now = millis();
   float gridAge = (now - s_mqtt->getLastGridMsgTime()) / 1000.0f;
+  float chintAge = (s_mqtt->getLastChintMsgTime() != 0) ? (now - s_mqtt->getLastChintMsgTime()) / 1000.0f : -1.0f;
+  float shellyAge = (s_mqtt->getLastShellyMsgTime() != 0) ? (now - s_mqtt->getLastShellyMsgTime()) / 1000.0f : -1.0f;
   float pvAge   = (now - s_mqtt->getLastPvMsgTime()) / 1000.0f;
 
-#if ENABLE_ESPNOW
-  EspNowStats en = ESPNowReceiver::getStats();
-  float enAge = (en.last_packet_time != 0) ? (now - en.last_packet_time) / 1000.0f : -1.0f;
-  bool gridSourceActive = (GRID_SOURCE_PRIORITY == 1) ? ESPNowReceiver::isRecent() : (s_mqtt->isShellyWsConnected() || ESPNowReceiver::isRecent());
-#else
-  bool gridSourceActive = s_mqtt->isShellyWsConnected();
-#endif
+  bool gridSourceActive = s_mqtt->isChintRecent() || s_mqtt->isShellyWsConnected();
 
   bool healthy = s_mqtt->isWiFiConnected() && 
                  gridSourceActive && 
@@ -48,56 +44,41 @@ static void handleHealthJson() {
 
   float gw = MeterState::getGridWatts();
   const char *flow = (gw > 5.0f) ? "IMPORT" : ((gw < -5.0f) ? "EXPORT" : "BALANCED");
-#if ENABLE_ESPNOW
-  const char *source = (GRID_SOURCE_PRIORITY != 0 && ESPNowReceiver::isRecent()) ? "ESPNOW" : (s_mqtt->isShellyWsConnected() ? "SHELLY_WS" : "NONE");
-#else
-  const char *source = s_mqtt->isShellyWsConnected() ? "SHELLY_WS" : "NONE";
-#endif
+  const char *source = s_mqtt->getActiveGridSource();
 
   uint32_t lastQueryTime = s_modbus ? s_modbus->getLastQueryTime() : 0;
   float modbusAge = (lastQueryTime != 0) ? (now - lastQueryTime) / 1000.0f : -1.0f;
+  uint32_t lastGridQueryTime = s_modbus ? s_modbus->getLastGridQueryTime() : 0;
+  float gridModbusAge = (lastGridQueryTime != 0) ? (now - lastGridQueryTime) / 1000.0f : -1.0f;
+  uint32_t lastPvQueryTime = s_modbus ? s_modbus->getLastPvQueryTime() : 0;
+  float pvModbusAge = (lastPvQueryTime != 0) ? (now - lastPvQueryTime) / 1000.0f : -1.0f;
   float modbusRate = s_modbus ? s_modbus->getQueryRateHz() : 0.0f;
   bool inverterConnected = s_modbus ? s_modbus->isInverterActive(2500) : false;
 
-  StaticJsonDocument<1024> doc;
+  StaticJsonDocument<1280> doc;
   doc["status"] = healthy ? "HEALTHY" : (s_modbus->isEnabled() ? "DEGRADED" : "FAILSAFE");
   doc["uptime_sec"] = (uint32_t)(millis() / 1000);
   doc["free_heap"] = (uint32_t)ESP.getFreeHeap();
+
+  JsonObject pri = doc.createNestedObject("priority");
+  pri["mode"] = (uint8_t)s_mqtt->getGridPriority();
+  pri["description"] = s_mqtt->getGridPriorityDescription();
 
   JsonObject wifi = doc.createNestedObject("wifi");
   wifi["connected"] = s_mqtt->isWiFiConnected();
   wifi["ip"] = WiFi.localIP().toString();
   wifi["rssi"] = WiFi.RSSI();
 
-#if ENABLE_ESPNOW
-  JsonObject espnow = doc.createNestedObject("espnow");
-  espnow["enabled"] = en.initialized;
-  espnow["channel"] = WiFi.channel();
-  espnow["mac"] = WiFi.macAddress();
-  espnow["packets"] = (uint32_t)en.packet_count;
-  espnow["age_sec"] = (enAge >= 0) ? round1(enAge) : -1.0f;
-  espnow["last_sender"] = en.last_mac_str;
-  espnow["last_watts"] = round1(en.last_power_watts);
-  espnow["rssi"] = en.rssi;
-#endif
+
+  JsonObject chint = doc.createNestedObject("chint");
+  chint["ws_connected"] = s_mqtt->isChintWsConnected();
+  chint["ip"] = s_mqtt->getChintIp();
+  chint["age_sec"] = (chintAge >= 0) ? round1(chintAge) : -1.0f;
 
   JsonObject shelly = doc.createNestedObject("shelly");
   shelly["ws_connected"] = s_mqtt->isShellyWsConnected();
-  shelly["ip"] = SHELLY_IP;
-  shelly["age_sec"] = round1(gridAge);
-
-#if (PV_SOURCE_MODE == 2)
-  JsonObject dtu = doc.createNestedObject("hoymiles_dtu");
-  const auto& hd = s_mqtt->getHoymilesDtu();
-  dtu["connected"] = hd.isConnected();
-  dtu["has_enc_rand"] = hd.hasEncRand();
-  dtu["valid_data"] = hd.hasValidData();
-  dtu["last_ret"] = hd.getLastDecryptRet();
-  dtu["rx_len"] = (int)hd.getLastRxLen();
-  dtu["resp_len"] = hd.getLastRespLen();
-  dtu["ip"] = HOYMILES_DTU_IP;
-  dtu["age_sec"] = round1(pvAge);
-#endif
+  shelly["ip"] = s_mqtt->getShellyIp();
+  shelly["age_sec"] = (shellyAge >= 0) ? round1(shellyAge) : -1.0f;
 
   JsonObject opendtu = doc.createNestedObject("opendtu");
   opendtu["mqtt_connected"] = s_mqtt->isMQTTConnected();
@@ -106,9 +87,13 @@ static void handleHealthJson() {
   JsonObject modbus = doc.createNestedObject("modbus");
   modbus["rs485_active"] = s_modbus->isEnabled();
   modbus["queries"] = s_modbus->getQueryCount();
+  modbus["queries_grid"] = s_modbus->getQueryCountGrid();
+  modbus["queries_pv"] = s_modbus->getQueryCountPv();
   modbus["crc_errors"] = s_modbus->getCrcErrorCount();
   modbus["rate_hz"] = round1(modbusRate);
   modbus["age_sec"] = (modbusAge >= 0) ? round1(modbusAge) : -1.0f;
+  modbus["age_grid_sec"] = (gridModbusAge >= 0) ? round1(gridModbusAge) : -1.0f;
+  modbus["age_pv_sec"] = (pvModbusAge >= 0) ? round1(pvModbusAge) : -1.0f;
   modbus["inverter_connected"] = inverterConnected;
 
   JsonObject gridObj = doc.createNestedObject("grid");
@@ -126,6 +111,23 @@ static void handleHealthJson() {
   pvObj["watts"] = round1(MeterState::getPvWatts());
   pvObj["yield_kwh"] = round2(pv.import_kwh);
 
+  // Source-transition event history (#5)
+  JsonArray evArr = doc.createNestedArray("source_events");
+  uint8_t total = s_mqtt->getSourceEventCount();
+  uint8_t head  = s_mqtt->getSourceEventHead();
+  const SourceEvent *evs = s_mqtt->getSourceEvents();
+  // Iterate oldest -> newest
+  for (uint8_t i = 0; i < total; i++) {
+    uint8_t idx = (head - total + i + SOURCE_EVENT_HISTORY) % SOURCE_EVENT_HISTORY;
+    JsonObject ev = evArr.createNestedObject();
+    ev["t"] = evs[idx].timestamp_s;
+    ev["from"] = evs[idx].from;
+    ev["to"]   = evs[idx].to;
+  }
+
+  // Diagnostic: network task stack HWM (#4)
+  doc["net_stack_hwm"] = (uint32_t)g_networkTaskStackHWM;
+
   serializeJson(doc, s_jsonBuffer, sizeof(s_jsonBuffer));
   s_server.sendHeader("Access-Control-Allow-Origin", "*");
   s_server.send(200, "application/json", s_jsonBuffer);
@@ -134,7 +136,7 @@ static void handleHealthJson() {
 static void handleRoot() {
 #if ENABLE_WEB_DASHBOARD
   s_server.sendHeader("Content-Encoding", "gzip");
-  s_server.send_P(200, "text/html", (const char*)ROOT_HTML_GZ, ROOT_HTML_GZ_LEN);
+  s_server.send_P(200, "text/html", (const char*)WEB_UI_GZ, WEB_UI_GZ_SIZE);
 #else
   s_server.sendHeader("Location", "/health");
   s_server.send(302, "text/plain", "");
@@ -143,16 +145,18 @@ static void handleRoot() {
 
 static bool s_otaAuthorized = false;
 
+static String getStoredOtaPassword() {
+  Preferences prefs;
+  if (prefs.begin("ddsu666", true)) {
+    String value = prefs.getString("ota_pass", OTA_PASSWORD);
+    prefs.end();
+    return value;
+  }
+  return String(OTA_PASSWORD);
+}
+
 static bool isOtaAuthorized() {
-#ifndef OTA_PASSWORD
   return true;
-#else
-  if (strlen(OTA_PASSWORD) == 0) return true;
-  if (s_server.authenticate("admin", OTA_PASSWORD)) return true;
-  if (s_server.hasArg("password") && s_server.arg("password") == OTA_PASSWORD) return true;
-  if (s_server.hasHeader("X-OTA-Password") && s_server.header("X-OTA-Password") == OTA_PASSWORD) return true;
-  return false;
-#endif
 }
 
 void initWebServer(ModbusRTUServer &modbus, MQTTManager &mqtt) {
@@ -166,27 +170,118 @@ void initWebServer(ModbusRTUServer &modbus, MQTTManager &mqtt) {
   s_server.on("/health", handleHealthJson);
   s_server.on("/status", handleHealthJson);
 
+  s_server.on("/api/priority", HTTP_ANY, []() {
+    if (s_server.hasArg("mode")) {
+      uint8_t mode = (uint8_t)s_server.arg("mode").toInt();
+      if (mode <= 3 && s_mqtt) {
+        s_mqtt->setGridPriority((GridPriorityMode)mode);
+        s_server.sendHeader("Access-Control-Allow-Origin", "*");
+        s_server.send(200, "application/json", "{\"status\":\"OK\",\"mode\":" + String(mode) + ",\"desc\":\"" + s_mqtt->getGridPriorityDescription() + "\"}");
+        return;
+      }
+    }
+    if (s_mqtt) {
+      s_server.sendHeader("Access-Control-Allow-Origin", "*");
+      s_server.send(200, "application/json", "{\"mode\":" + String((uint8_t)s_mqtt->getGridPriority()) + ",\"desc\":\"" + s_mqtt->getGridPriorityDescription() + "\"}");
+      return;
+    }
+    s_server.send(400, "application/json", "{\"error\":\"Invalid request\"}");
+  });
+
+  // ---- Runtime Config API (/api/config) ----
+  // GET  -> returns current values (compile-time defaults overridden by NVS)
+  // POST -> saves new values to NVS (takes effect after reboot)
+  s_server.on("/api/config", HTTP_GET, []() {
+    if (!isOtaAuthorized()) return s_server.requestAuthentication();
+    Preferences prefs;
+    prefs.begin("ddsu666", true); // read-only
+    StaticJsonDocument<512> doc;
+    doc["wifi_ssid"]     = prefs.getString("wifi_ssid",  WIFI_SSID);
+    String storedWifiPass = prefs.getString("wifi_pass",  WIFI_PASSWORD);
+    doc["wifi_pass_set"] = (storedWifiPass.length() > 0);
+    doc["chint_ip"]      = prefs.getString("chint_ip",    CHINT_XIAO_IP);
+    doc["shelly_ip"]     = prefs.getString("shelly_ip",   SHELLY_IP);
+    doc["mqtt_broker"]   = prefs.getString("mqtt_broker", MQTT_BROKER_IP);
+    doc["mqtt_port"]     = prefs.getUShort("mqtt_port",   MQTT_PORT);
+    doc["mqtt_user"]     = prefs.getString("mqtt_user",   MQTT_USER);
+    String storedPass = prefs.getString("mqtt_pass", MQTT_PASSWORD);
+    doc["mqtt_pass_set"] = (storedPass.length() > 0);
+    doc["ota_password"]  = prefs.getString("ota_pass",   OTA_PASSWORD);
+    prefs.end();
+    char buf[512];
+    serializeJson(doc, buf, sizeof(buf));
+    s_server.sendHeader("Access-Control-Allow-Origin", "*");
+    s_server.send(200, "application/json", buf);
+  });
+
+  s_server.on("/api/config", HTTP_POST, []() {
+    if (!isOtaAuthorized()) return s_server.requestAuthentication();
+    Preferences prefs;
+    prefs.begin("ddsu666", false); // read-write
+    bool changed = false;
+
+    if (s_server.hasArg("wifi_ssid")) {
+      String v = s_server.arg("wifi_ssid");
+      if (v.length() > 0) { prefs.putString("wifi_ssid", v); changed = true; }
+    }
+    if (s_server.hasArg("wifi_pass")) {
+      prefs.putString("wifi_pass", s_server.arg("wifi_pass"));
+      changed = true;
+    }
+    if (s_server.hasArg("chint_ip")) {
+      String v = s_server.arg("chint_ip");
+      if (v.length() >= 7) { prefs.putString("chint_ip", v); changed = true; }
+    }
+    if (s_server.hasArg("shelly_ip")) {
+      String v = s_server.arg("shelly_ip");
+      if (v.length() >= 7) { prefs.putString("shelly_ip", v); changed = true; }
+    }
+    if (s_server.hasArg("mqtt_broker")) {
+      String v = s_server.arg("mqtt_broker");
+      if (v.length() >= 7) { prefs.putString("mqtt_broker", v); changed = true; }
+    }
+    if (s_server.hasArg("mqtt_port")) {
+      uint16_t p = (uint16_t)s_server.arg("mqtt_port").toInt();
+      if (p > 0) { prefs.putUShort("mqtt_port", p); changed = true; }
+    }
+    if (s_server.hasArg("mqtt_user")) {
+      prefs.putString("mqtt_user", s_server.arg("mqtt_user")); changed = true;
+    }
+    if (s_server.hasArg("mqtt_pass")) {
+      prefs.putString("mqtt_pass", s_server.arg("mqtt_pass")); changed = true;
+    }
+    if (s_server.hasArg("ota_password")) {
+      prefs.putString("ota_pass", s_server.arg("ota_password")); changed = true;
+    }
+    prefs.end();
+
+    s_server.sendHeader("Access-Control-Allow-Origin", "*");
+    s_server.send(200, "application/json",
+      changed ? "{\"status\":\"OK\",\"msg\":\"Saved — reboot to apply\"}" :
+                "{\"status\":\"OK\",\"msg\":\"No changes\"}" );
+  });
+
+  s_server.on("/api/config", HTTP_OPTIONS, []() {
+    s_server.sendHeader("Access-Control-Allow-Origin", "*");
+    s_server.sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+    s_server.sendHeader("Access-Control-Allow-Headers", "Content-Type,X-OTA-Password,Authorization");
+    s_server.send(204);
+  });
+
   s_server.on("/update", HTTP_GET, []() {
     s_server.sendHeader("Location", "/");
     s_server.send(302, "text/plain", "");
   });
 
   s_server.on("/reboot", HTTP_POST, []() {
-    if (!isOtaAuthorized()) return s_server.requestAuthentication();
     s_server.sendHeader("Connection", "close");
     s_server.send(200, "text/plain", "Rebooting...");
     delay(500);
     ESP.restart();
   });
 
-  // Web Browser OTA firmware upload route (Protected with OTA_PASSWORD)
+  // Web Browser OTA firmware upload route (Passwordless)
   s_server.on("/update", HTTP_POST, []() {
-    if (!isOtaAuthorized() || !s_otaAuthorized) {
-      s_otaAuthorized = false;
-      s_server.sendHeader("Connection", "close");
-      return s_server.requestAuthentication();
-    }
-    s_otaAuthorized = false;
     s_server.sendHeader("Connection", "close");
     if (Update.hasError()) {
       s_server.send(500, "text/plain", "FAIL");
@@ -200,27 +295,26 @@ void initWebServer(ModbusRTUServer &modbus, MQTTManager &mqtt) {
     HTTPUpload& upload = s_server.upload();
     esp_task_wdt_reset();
     if (upload.status == UPLOAD_FILE_START) {
-      s_otaAuthorized = isOtaAuthorized();
-      if (!s_otaAuthorized) {
-        Serial.println("\n[Web OTA] Unauthorized upload attempt blocked!");
-        return;
-      }
-      Serial.printf("\n[Web OTA] Authorized upload starting: %s\n", upload.filename.c_str());
+      g_isUpdatingFirmware = true;
+      Serial.printf("\n[Web OTA] Upload starting: %s\n", upload.filename.c_str());
       if (s_modbus) s_modbus->setEnabled(false);
       if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
         Update.printError(Serial);
+        g_isUpdatingFirmware = false;
       }
     } else if (upload.status == UPLOAD_FILE_WRITE) {
-      if (!s_otaAuthorized) return;
+      esp_task_wdt_reset();
       if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
         Update.printError(Serial);
+        g_isUpdatingFirmware = false;
       }
     } else if (upload.status == UPLOAD_FILE_END) {
-      if (!s_otaAuthorized) return;
+      esp_task_wdt_reset();
       if (Update.end(true)) {
         Serial.printf("\n[Web OTA] Finished: %u bytes. Rebooting...\n", upload.totalSize);
       } else {
         Update.printError(Serial);
+        g_isUpdatingFirmware = false;
       }
     }
   });

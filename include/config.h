@@ -47,49 +47,41 @@ constexpr uint8_t MODBUS_SLAVE_PV         = 1;  // Slave ID 1: PV Inverter Strin
 // Watchdogs & Timings
 constexpr uint32_t WATCHDOG_TIMEOUT_SEC   = 10; // Fail-safe timeout in seconds (Grid & PV)
 
+// Chint DDSU666 Master (Seeed Studio XIAO ESP32-S3) Configuration
+#ifndef CHINT_XIAO_IP
+#define CHINT_XIAO_IP                     "10.0.0.197"
+#endif
+constexpr uint16_t CHINT_XIAO_WS_PORT     = 81;
+constexpr const char* CHINT_XIAO_WS_PATH  = "/";
+constexpr uint32_t CHINT_TIMEOUT_MS       = 4000;   // 4s fallback timeout to Shelly
+
 // Shelly WebSocket Configuration
 #ifndef SHELLY_IP
 #define SHELLY_IP                         "10.0.0.187"
 #endif
 constexpr uint16_t SHELLY_WS_PORT         = 80;
 constexpr const char* SHELLY_WS_PATH      = "/rpc";
-constexpr uint32_t SHELLY_POLL_INTERVAL_MS= 200;   // 200ms ultra-fast polling for zero-export control
+constexpr uint32_t SHELLY_POLL_INTERVAL_MS= 500;   // 500ms stable polling for zero-export control
 constexpr uint32_t SHELLY_ENERGY_INTERVAL_MS = 60000; // 60s energy counter interval
 
-// PV Solar Generation Source:
-// 0 = None / Manual
-// 1 = OpenDTU via MQTT (Topic solar/ac/power & yield)
-// 2 = Direct Hoymiles DTU-Lite-S / DTU-WLite TCP Polling (Port 10081)
-#ifndef PV_SOURCE_MODE
-#define PV_SOURCE_MODE                    2
-#endif
-
-// Hoymiles DTU-Lite-S Configuration (when PV_SOURCE_MODE == 2)
-#ifndef HOYMILES_DTU_IP
-#define HOYMILES_DTU_IP                   "10.0.0.164"
-#endif
-constexpr uint16_t HOYMILES_DTU_PORT      = 10081;
-constexpr uint32_t HOYMILES_POLL_INTERVAL_MS = 10000; // 10s polling interval
-
-// OpenDTU MQTT Topics (used when PV_SOURCE_MODE == 1, or for bridging)
+// PV Solar Generation Source: OpenDTU via MQTT
 constexpr const char* TOPIC_OPENDTU_POWER = "solar/ac/power";
 constexpr const char* TOPIC_OPENDTU_YIELD = "solar/ac/yieldtotal";
 
 // Web Interface Options (Set to 0 for headless API-only mode)
 #define ENABLE_WEB_DASHBOARD              1
 
-// ESP-NOW Receiver Options
-#define ENABLE_ESPNOW                     1   // 1 = Enable concurrent ESP-NOW receiver, 0 = Disable
-// Grid Power Source Priority:
-// 0 = Shelly WebSocket Only
-// 1 = ESP-NOW Only (Lolin C3 Bridge)
-// 2 = Auto (ESP-NOW takes priority if packets received in last 5s, else Shelly WS fallback)
-#define GRID_SOURCE_PRIORITY              2
+// Grid Power Source Priority Modes:
+enum GridPriorityMode : uint8_t {
+  GRID_PRI_CHINT_SHELLY = 0, // Default Auto: Chint WS -> Shelly WS fallback
+  GRID_PRI_SHELLY_CHINT = 1, // Auto: Shelly WS -> Chint WS fallback
+  GRID_PRI_CHINT_ONLY   = 2, // Chint WS Only
+  GRID_PRI_SHELLY_ONLY  = 3  // Shelly WS Only
+};
 
-// Wi-Fi Channel Selection (0 = Auto-scan, 1-13 = Force channel to match ESP-NOW peer)
-#define WIFI_FORCE_CHANNEL                1
+#define DEFAULT_GRID_PRIORITY_MODE        GRID_PRI_CHINT_SHELLY
 
-// Web OTA Authentication Password
+// Web OTA Authentication Password (empty = disabled / no password)
 #ifndef OTA_PASSWORD
-#define OTA_PASSWORD                      "admin"
+#define OTA_PASSWORD                      ""
 #endif

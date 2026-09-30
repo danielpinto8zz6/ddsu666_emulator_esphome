@@ -6,6 +6,8 @@
 #include "meter_data.h"
 #include "modbus_rtu.h"
 
+extern volatile bool g_isUpdatingFirmware;
+
 // Forward declaration of MQTTManager
 class MQTTManager;
 

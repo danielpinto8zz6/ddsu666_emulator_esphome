@@ -23,6 +23,7 @@ usage() {
     echo "  lilygo      LILYGO T-CAN485 (ESP32)"
     echo "  waveshare   Waveshare ESP32-S3 RS485"
     echo "  xiao        Seeed Studio XIAO ESP32-S3 RS485"
+    echo "  chint-reader Seeed Studio XIAO ESP32-S3 Chint Master (WS Server)"
     echo "  supermini   ESP32-C3 SuperMini Transmitter"
     echo ""
     echo -e "${CYAN}Options:${NC}"
@@ -62,15 +63,24 @@ case "$TARGET" in
         ENV_NAME="xiao-esp32-s3"
         BIN_PATH=".pio/build/xiao-esp32-s3/firmware.bin"
         ;;
+    xiao-tx|xiao-transmitter|xiao-s3-tx)
+        ENV_NAME="xiao-esp32-s3-transmitter"
+        BIN_PATH=".pio/build/xiao-esp32-s3-transmitter/firmware.bin"
+        ;;
     supermini|c3|lolin)
         ENV_NAME="esp32-c3-supermini"
         BIN_PATH=".pio/build/esp32-c3-supermini/firmware.bin"
+        ;;
+    chint-reader|chint|ddsu666-reader)
+        ENV_NAME="chint-reader-xiao-s3"
+        BIN_PATH=".pio/build/chint-reader-xiao-s3/firmware.bin"
         ;;
     *)
         echo -e "${RED}Error: Unknown target '$TARGET'${NC}"
         usage
         ;;
 esac
+
 
 # Locate PlatformIO executable
 PIO_BIN="pio"
@@ -91,10 +101,10 @@ if [[ ! -f "$BIN_PATH" ]]; then
     exit 1
 fi
 
-# Resolve OTA Password (from secrets.h, environment variable, or fallback "admin")
-OTA_PASS="admin"
+# Resolve OTA Password (default empty / passwordless)
+OTA_PASS=""
 if [[ -f "include/secrets.h" ]]; then
-    EXTRACTED_PASS=$(grep -E '^\s*#define\s+OTA_PASSWORD\s+' include/secrets.h | head -n1 | sed -E 's/.*"([^"]+)".*/\1/' || true)
+    EXTRACTED_PASS=$(grep -E '^\s*#define\s+OTA_PASSWORD\s+' include/secrets.h | head -n1 | sed -E 's/.*"([^"]*)".*/\1/' || true)
     if [[ -n "$EXTRACTED_PASS" ]]; then
         OTA_PASS="$EXTRACTED_PASS"
     fi
@@ -105,17 +115,25 @@ BIN_SIZE=$(wc -c < "$BIN_PATH")
 echo -e "${CYAN}==> Target:${NC}    ${ENV_NAME}"
 echo -e "${CYAN}==> Device IP:${NC} ${DEVICE_IP}"
 echo -e "${CYAN}==> Binary:${NC}    ${BIN_PATH} (${BIN_SIZE} bytes)"
-echo -e "${CYAN}==> Uploading OTA firmware to http://${DEVICE_IP}/update (auth: admin)...${NC}"
+if [[ -n "$OTA_PASS" ]]; then
+    echo -e "${CYAN}==> Uploading OTA firmware to http://${DEVICE_IP}/update (authenticated)...${NC}"
+else
+    echo -e "${CYAN}==> Uploading OTA firmware to http://${DEVICE_IP}/update (passwordless)...${NC}"
+fi
 
 # Perform OTA upload with curl (Expect: header is mandatory to prevent 100-continue stalls)
+AUTH_ARGS=()
+if [[ -n "$OTA_PASS" ]]; then
+    AUTH_ARGS=(-u "admin:${OTA_PASS}" -H "X-OTA-Password: ${OTA_PASS}")
+fi
+
 HTTP_CODE=$(curl -s -o /tmp/ota_response.txt -w "%{http_code}" \
-    -u "admin:${OTA_PASS}" \
+    "${AUTH_ARGS[@]}" \
     -F "file=@${BIN_PATH}" \
     -H "Expect:" \
-    -H "X-OTA-Password: ${OTA_PASS}" \
-    --connect-timeout 8 \
-    --max-time 60 \
-    "http://${DEVICE_IP}/update?password=${OTA_PASS}")
+    --connect-timeout 15 \
+    --max-time 180 \
+    "http://${DEVICE_IP}/update")
 
 RESPONSE=$(cat /tmp/ota_response.txt 2>/dev/null || echo "")
 

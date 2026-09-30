@@ -129,7 +129,6 @@ wifi:
 # Standard ESPHome Over-The-Air updates
 ota:
   - platform: esphome
-    password: !secret ota_password
 
 mqtt:
   id: mqtt_bus

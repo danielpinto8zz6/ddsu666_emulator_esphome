@@ -1,30 +1,64 @@
 #include "mqtt_manager.h"
 #include <cmath>
-#if ENABLE_ESPNOW
-#include "esp_now_receiver.h"
-#endif
+#include <esp_now.h>
+#include <esp_wifi.h>
+
+MQTTManager* MQTTManager::s_instance = nullptr;
 
 MQTTManager::MQTTManager(ModbusRTUServer &modbusServer)
   : _modbusServer(modbusServer),
     _mqttClient(_wifiClient),
+    _gridPriority(DEFAULT_GRID_PRIORITY_MODE),
     _lastGridMsgTime(0),
+    _lastChintMsgTime(0),
+    _lastShellyMsgTime(0),
     _lastPvMsgTime(0),
     _lastReconnectAttempt(0),
     _lastWiFiConnectAttempt(0),
     _lastShellyPollTime(0),
     _lastShellyEnergyPollTime(0),
-    _lastTelemetryPublishTime(0),
-    _lastFastPublishTime(0),
-    _lastPublishedGridWatts(0.0f),
-    _lastPublishedPvWatts(0.0f),
     _gridWatchdogTriggered(false),
     _pvWatchdogTriggered(false),
     _shellyWsConnected(false),
-    _haDiscoveryPublished(false) {
+    _chintWsConnected(false),
+    _sourceEventHead(0),
+    _sourceEventCount(0) {
+  s_instance = this;
+  strncpy(_lastKnownSource, "NONE", sizeof(_lastKnownSource));
+  memset(_sourceEvents, 0, sizeof(_sourceEvents));
 }
 
 void MQTTManager::begin() {
-  _mqttClient.setServer(MQTT_BROKER_IP, MQTT_PORT);
+  s_instance = this;
+
+  Preferences prefs;
+  if (prefs.begin("ddsu666", false)) {
+    _gridPriority = (GridPriorityMode)prefs.getUChar("grid_pri", (uint8_t)DEFAULT_GRID_PRIORITY_MODE);
+    // Runtime-configurable network settings (overrides compile-time defaults)
+    _chintIp     = prefs.getString("chint_ip",    CHINT_XIAO_IP);
+    _shellyIp    = prefs.getString("shelly_ip",   SHELLY_IP);
+    _mqttBroker  = prefs.getString("mqtt_broker", MQTT_BROKER_IP);
+    _mqttPort    = prefs.getUShort("mqtt_port",   MQTT_PORT);
+    _mqttUser    = prefs.getString("mqtt_user",   MQTT_USER);
+    _mqttPass    = prefs.getString("mqtt_pass",   MQTT_PASSWORD);
+    _wifiSsid    = prefs.getString("wifi_ssid",   WIFI_SSID);
+    _wifiPassword= prefs.getString("wifi_pass",   WIFI_PASSWORD);
+    prefs.end();
+  } else {
+    _chintIp     = CHINT_XIAO_IP;
+    _shellyIp    = SHELLY_IP;
+    _mqttBroker  = MQTT_BROKER_IP;
+    _mqttPort    = MQTT_PORT;
+    _mqttUser    = MQTT_USER;
+    _mqttPass    = MQTT_PASSWORD;
+    _wifiSsid    = WIFI_SSID;
+    _wifiPassword= WIFI_PASSWORD;
+  }
+
+  Serial.printf("[Config] Chint: %s | Shelly: %s | MQTT: %s:%u\n",
+                _chintIp.c_str(), _shellyIp.c_str(), _mqttBroker.c_str(), _mqttPort);
+
+  _mqttClient.setServer(_mqttBroker.c_str(), _mqttPort);
   _mqttClient.setBufferSize(768);
   _mqttClient.setCallback([this](char *topic, uint8_t *payload, unsigned int length) {
     this->onMqttMessage(topic, payload, length);
@@ -35,21 +69,80 @@ void MQTTManager::begin() {
   WiFi.setSleep(false);
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
 
-#if ENABLE_ESPNOW
-  ESPNowReceiver::begin();
-#endif
-
   connectWiFi();
+  connectChintWS();
   connectShellyWS();
 
-#if (PV_SOURCE_MODE == 2)
-  _hoymilesDtu.begin(HOYMILES_DTU_IP, HOYMILES_DTU_PORT, HOYMILES_POLL_INTERVAL_MS);
-#endif
+  // Initialize ESP-NOW receiver for blackout-proof PV streaming from Sonoff POWCT
+  if (esp_now_init() == ESP_OK) {
+    esp_now_register_recv_cb([](const uint8_t *mac_addr, const uint8_t *data, int data_len) {
+      if (data_len == 9 && data && data[0] == 0xD6) {
+        float watts = 0.0f;
+        float yield_kwh = 0.0f;
+        memcpy(&watts, data + 1, 4);
+        memcpy(&yield_kwh, data + 5, 4);
+        if (s_instance) {
+          s_instance->handleEspNowPv(watts, yield_kwh);
+        }
+      }
+    });
+    Serial.println("[ESP-NOW] Initialized PV receiver (listening for 0xD6 packets from Sonoff POWCT)");
+  } else {
+    Serial.println("[ESP-NOW] Init failed");
+  }
 
   _lastGridMsgTime = millis();
+  _lastChintMsgTime = 0;
+  _lastShellyMsgTime = 0;
   _lastPvMsgTime = millis();
   _lastShellyPollTime = millis();
   _lastShellyEnergyPollTime = millis();
+}
+
+void MQTTManager::setGridPriority(GridPriorityMode mode) {
+  _gridPriority = mode;
+  Preferences prefs;
+  if (prefs.begin("ddsu666", false)) {
+    prefs.putUChar("grid_pri", (uint8_t)mode);
+    prefs.end();
+  }
+  Serial.printf("[Priority] Grid Priority Mode set to %u: %s\n", (unsigned)mode, getGridPriorityDescription());
+}
+
+const char* MQTTManager::getGridPriorityDescription() const {
+  switch (_gridPriority) {
+    case GRID_PRI_CHINT_SHELLY: return "Auto: Chint WS -> Shelly WS";
+    case GRID_PRI_SHELLY_CHINT: return "Auto: Shelly WS -> Chint WS";
+    case GRID_PRI_CHINT_ONLY:   return "Chint WS Only";
+    case GRID_PRI_SHELLY_ONLY:  return "Shelly WS Only";
+    default:                    return "Unknown";
+  }
+}
+
+bool MQTTManager::canChintUpdateGrid() const {
+  switch (_gridPriority) {
+    case GRID_PRI_CHINT_SHELLY:
+    case GRID_PRI_CHINT_ONLY:
+      return true;
+    case GRID_PRI_SHELLY_CHINT:
+      return !isShellyRecent(5000);
+    case GRID_PRI_SHELLY_ONLY:
+    default:
+      return false;
+  }
+}
+
+bool MQTTManager::canShellyUpdateGrid() const {
+  switch (_gridPriority) {
+    case GRID_PRI_CHINT_SHELLY:
+      return !isChintRecent(CHINT_TIMEOUT_MS);
+    case GRID_PRI_SHELLY_CHINT:
+    case GRID_PRI_SHELLY_ONLY:
+      return true;
+    case GRID_PRI_CHINT_ONLY:
+    default:
+      return false;
+  }
 }
 
 void MQTTManager::connectWiFi() {
@@ -61,32 +154,42 @@ void MQTTManager::connectWiFi() {
   }
   _lastWiFiConnectAttempt = now;
 
+  String ssid = (_wifiSsid.length() > 0) ? _wifiSsid : String(WIFI_SSID);
+  String pass = (_wifiPassword.length() > 0) ? _wifiPassword : String(WIFI_PASSWORD);
+
 #if WIFI_FORCE_CHANNEL > 0
-  Serial.printf("[WiFi] Connecting to %s on Channel %d...\n", WIFI_SSID, WIFI_FORCE_CHANNEL);
+  Serial.printf("[WiFi] Connecting to %s on Channel %d...\n", ssid.c_str(), WIFI_FORCE_CHANNEL);
   WiFi.disconnect();
   delay(100);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD, WIFI_FORCE_CHANNEL);
+  WiFi.begin(ssid.c_str(), pass.c_str(), WIFI_FORCE_CHANNEL);
 #else
-  Serial.printf("[WiFi] Connecting to %s...\n", WIFI_SSID);
+  Serial.printf("[WiFi] Connecting to %s...\n", ssid.c_str());
   WiFi.disconnect();
   delay(100);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.begin(ssid.c_str(), pass.c_str());
 #endif
 }
 
-void MQTTManager::connectShellyWS() {
-#if ENABLE_ESPNOW && (GRID_SOURCE_PRIORITY == 1)
-  Serial.println("[Shelly WS] Disabled on Lilygo (Dedicated ESP-NOW Mode from Lolin C3)");
-  return;
-#else
-  Serial.printf("[Shelly WS] Initializing connection to ws://%s:%d%s\n",
-                SHELLY_IP, SHELLY_WS_PORT, SHELLY_WS_PATH);
-  _wsClient.begin(SHELLY_IP, SHELLY_WS_PORT, SHELLY_WS_PATH);
-  _wsClient.onEvent([this](WStype_t type, uint8_t *payload, size_t length) {
-    this->onWsEvent(type, payload, length);
+void MQTTManager::connectChintWS() {
+  Serial.printf("[Chint WS] Initializing connection to ws://%s:%d%s\n",
+                _chintIp.c_str(), CHINT_XIAO_WS_PORT, CHINT_XIAO_WS_PATH);
+  _wsChint.begin(_chintIp.c_str(), CHINT_XIAO_WS_PORT, CHINT_XIAO_WS_PATH);
+  _wsChint.onEvent([this](WStype_t type, uint8_t *payload, size_t length) {
+    this->onChintWsEvent(type, payload, length);
   });
-  _wsClient.setReconnectInterval(2000);
-#endif
+  _wsChint.setReconnectInterval(2000);
+  _wsChint.enableHeartbeat(5000, 2000, 2);
+}
+
+void MQTTManager::connectShellyWS() {
+  Serial.printf("[Shelly WS] Initializing connection to ws://%s:%d%s\n",
+                _shellyIp.c_str(), SHELLY_WS_PORT, SHELLY_WS_PATH);
+  _wsShelly.begin(_shellyIp.c_str(), SHELLY_WS_PORT, SHELLY_WS_PATH);
+  _wsShelly.onEvent([this](WStype_t type, uint8_t *payload, size_t length) {
+    this->onShellyWsEvent(type, payload, length);
+  });
+  _wsShelly.setReconnectInterval(2000);
+  _wsShelly.enableHeartbeat(10000, 3000, 2);
 }
 
 void MQTTManager::connectMQTT() {
@@ -99,19 +202,16 @@ void MQTTManager::connectMQTT() {
 
   Serial.print("[OpenDTU MQTT] Connecting to broker...");
   bool ok;
-  if (strlen(MQTT_USER) > 0) {
-    ok = _mqttClient.connect(MQTT_CLIENT_ID, MQTT_USER, MQTT_PASSWORD);
+  if (_mqttUser.length() > 0) {
+    ok = _mqttClient.connect(MQTT_CLIENT_ID, _mqttUser.c_str(), _mqttPass.c_str());
   } else {
     ok = _mqttClient.connect(MQTT_CLIENT_ID);
   }
 
   if (ok) {
     Serial.println(" connected!");
-#if (PV_SOURCE_MODE == 1)
     _mqttClient.subscribe(TOPIC_OPENDTU_POWER);
     _mqttClient.subscribe(TOPIC_OPENDTU_YIELD);
-#endif
-    publishHADiscovery();
   } else {
     Serial.printf(" failed, rc=%d. Retrying in 5s\n", _mqttClient.state());
   }
@@ -119,6 +219,7 @@ void MQTTManager::connectMQTT() {
 
 void MQTTManager::loop() {
   static bool s_wasConnected = false;
+  static uint32_t s_wifiConnectedTime = 0;
 
   if (WiFi.status() != WL_CONNECTED) {
     if (s_wasConnected) {
@@ -126,21 +227,16 @@ void MQTTManager::loop() {
       if (_mqttClient.connected()) {
         _mqttClient.disconnect();
       }
-      _haDiscoveryPublished = false;
+      _wsChint.disconnect();
+      _wsShelly.disconnect();
       MeterState::zeroPvPower();
       _pvWatchdogTriggered = true;
       s_wasConnected = false;
-#if ENABLE_ESPNOW && (GRID_SOURCE_PRIORITY != 0)
-      if (!ESPNowReceiver::isRecent(3000)) {
-        if (_modbusServer.isEnabled()) _modbusServer.setEnabled(false);
-        _gridWatchdogTriggered = true;
-      }
-#else
       if (_modbusServer.isEnabled()) _modbusServer.setEnabled(false);
       _gridWatchdogTriggered = true;
-#endif
     }
     _shellyWsConnected = false;
+    _chintWsConnected = false;
     connectWiFi();
     return;
   }
@@ -148,88 +244,229 @@ void MQTTManager::loop() {
   if (!s_wasConnected) {
     Serial.printf("[WiFi] Connected! IP: %s (RSSI: %d dBm)\n",
                   WiFi.localIP().toString().c_str(), WiFi.RSSI());
-#if ENABLE_ESPNOW
-    Serial.printf("[ESP-NOW] Operating on Wi-Fi Channel: %d (Receiver MAC: %s)\n",
-                  WiFi.channel(), WiFi.macAddress().c_str());
-#endif
     s_wasConnected = true;
+    s_wifiConnectedTime = millis();
   }
 
-  // 1. Service Shelly WebSocket Client
-  _wsClient.loop();
+  // 1. Service WebSockets (Chint Master & Shelly)
+  _wsChint.loop();
+  _wsShelly.loop();
 
   uint32_t now = millis();
 
-  // Adaptive polling: Only poll Shelly at 500ms when ESP-NOW is inactive
-#if ENABLE_ESPNOW && (GRID_SOURCE_PRIORITY == 2)
-  bool espNowActive = ESPNowReceiver::isRecent(3000);
-  uint32_t pollInterval = espNowActive ? 10000 : SHELLY_POLL_INTERVAL_MS; // 10s keepalive when ESP-NOW is healthy, 500ms fallback
-#elif ENABLE_ESPNOW && (GRID_SOURCE_PRIORITY == 1)
-  uint32_t pollInterval = 60000;
-#else
-  uint32_t pollInterval = SHELLY_POLL_INTERVAL_MS;
-#endif
-
-  // Fast or adaptive polling for real-time telemetry
-  if (_shellyWsConnected && (now - _lastShellyPollTime >= pollInterval)) {
-    _lastShellyPollTime = now;
-    _wsClient.sendTXT("{\"id\":1,\"src\":\"esp32\",\"method\":\"EM1.GetStatus\",\"params\":{\"id\":0}}");
+  // Auto-recovery for Chint WS:
+  // If telemetry has stopped or never arrived for > 8s, force reset the connection.
+  // Re-calling begin() tears down any hung socket and starts a fresh handshake.
+  static uint32_t s_lastChintResetAttempt = 0;
+  uint32_t chintSilence = (_lastChintMsgTime != 0) ? (now - _lastChintMsgTime) : (now - s_wifiConnectedTime);
+  if (s_wasConnected && chintSilence > 8000 && (now - s_lastChintResetAttempt > 8000)) {
+    s_lastChintResetAttempt = now;
+    Serial.println("[Chint WS] Stale or missing telemetry, resetting connection...");
+    _chintWsConnected = false;
+    _wsChint.disconnect();
+    _wsChint.begin(_chintIp.c_str(), CHINT_XIAO_WS_PORT, CHINT_XIAO_WS_PATH);
   }
 
-  // 60-second polling for energy accumulators
-  if (_shellyWsConnected && (now - _lastShellyEnergyPollTime >= SHELLY_ENERGY_INTERVAL_MS)) {
-    _lastShellyEnergyPollTime = now;
-    _wsClient.sendTXT("{\"id\":2,\"src\":\"esp32\",\"method\":\"EM1Data.GetStatus\",\"params\":{\"id\":0}}");
-  }
+  bool chintFresh = isChintRecent(CHINT_TIMEOUT_MS);
 
-  // 2. Service PV Source (Hoymiles DTU or OpenDTU MQTT)
-#if (PV_SOURCE_MODE == 2)
-  _hoymilesDtu.loop();
-  if (_hoymilesDtu.hasValidData()) {
-    uint32_t lastDtuTime = _hoymilesDtu.getLastSuccessTime();
-    if (lastDtuTime != _lastPvMsgTime) {
-      _lastPvMsgTime = lastDtuTime;
-      _pvWatchdogTriggered = false;
-
-      // Also publish to MQTT broker if connected so other devices/dashboards can see PV telemetry
-      if (_mqttClient.connected()) {
-        char pBuf[16], yBuf[16];
-        snprintf(pBuf, sizeof(pBuf), "%.1f", _hoymilesDtu.getActivePowerW());
-        snprintf(yBuf, sizeof(yBuf), "%.3f", _hoymilesDtu.getTotalYieldKwh());
-        _mqttClient.publish(TOPIC_OPENDTU_POWER, pBuf, false);
-        _mqttClient.publish(TOPIC_OPENDTU_YIELD, yBuf, true);
-      }
+  // Shelly Polling Strategy:
+  // Shelly pushes updates automatically via WebSocket NotifyStatus.
+  // We only send a poll fallback if Shelly has been quiet for > 2000ms.
+  if (_shellyWsConnected && canShellyUpdateGrid()) {
+    if (now - _lastShellyPollTime >= 2500 && (now - _lastShellyMsgTime >= 2000)) {
+      _lastShellyPollTime = now;
+      _wsShelly.sendTXT("{\"id\":1,\"src\":\"esp32\",\"method\":\"EM1.GetStatus\",\"params\":{\"id\":0}}");
     }
   }
-#endif
 
-  // 3. Service OpenDTU MQTT Client & Telemetry
+  // 60-second polling for energy accumulators from Shelly (only during fallback when Chint is offline)
+  if (_shellyWsConnected && !chintFresh && (now - _lastShellyEnergyPollTime >= SHELLY_ENERGY_INTERVAL_MS)) {
+    _lastShellyEnergyPollTime = now;
+    _wsShelly.sendTXT("{\"id\":2,\"src\":\"esp32\",\"method\":\"EM1Data.GetStatus\",\"params\":{\"id\":0}}");
+  }
+
+  // 2. Service OpenDTU MQTT Client
   if (!_mqttClient.connected()) {
     connectMQTT();
   } else {
     _mqttClient.loop();
-
-    float curGridWatts = MeterState::getGridWatts();
-    float curPvWatts   = MeterState::getPvWatts();
-
-    bool deltaTrigger = (std::fabs(curGridWatts - _lastPublishedGridWatts) >= 25.0f) ||
-                        (std::fabs(curPvWatts - _lastPublishedPvWatts) >= 25.0f);
-    bool heartbeat   = (now - _lastTelemetryPublishTime >= 3000);
-    bool throttleOk  = (now - _lastFastPublishTime >= 250);
-
-    if ((deltaTrigger && throttleOk) || heartbeat) {
-      _lastTelemetryPublishTime = now;
-      _lastFastPublishTime = now;
-      _lastPublishedGridWatts = curGridWatts;
-      _lastPublishedPvWatts = curPvWatts;
-      publishTelemetry();
-    }
   }
 
   checkWatchdogs();
+  checkSourceTransition();
 }
 
-void MQTTManager::onWsEvent(WStype_t type, uint8_t *payload, size_t length) {
+const char* MQTTManager::getActiveGridSource() const {
+  bool chintFresh = isChintRecent(CHINT_TIMEOUT_MS);
+  bool shellyFresh = isShellyRecent(5000);
+
+  switch (_gridPriority) {
+    case GRID_PRI_CHINT_SHELLY:
+      if (chintFresh) return "CHINT_WS";
+      if (shellyFresh) return "SHELLY_WS";
+      break;
+
+    case GRID_PRI_SHELLY_CHINT:
+      if (shellyFresh) return "SHELLY_WS";
+      if (chintFresh) return "CHINT_WS";
+      break;
+
+    case GRID_PRI_CHINT_ONLY:
+      if (chintFresh) return "CHINT_WS";
+      break;
+
+    case GRID_PRI_SHELLY_ONLY:
+      if (shellyFresh) return "SHELLY_WS";
+      break;
+  }
+  return "NONE";
+}
+
+void MQTTManager::onChintWsEvent(WStype_t type, uint8_t *payload, size_t length) {
+  switch (type) {
+    case WStype_DISCONNECTED:
+      _chintWsConnected = false;
+      Serial.println("[Chint WS] Disconnected");
+      break;
+
+    case WStype_CONNECTED:
+      _chintWsConnected = true;
+      Serial.printf("[Chint WS] Connected to ws://%s:%d%s\n", _chintIp.c_str(), CHINT_XIAO_WS_PORT, CHINT_XIAO_WS_PATH);
+      break;
+
+    case WStype_TEXT:
+      handleChintMessage(payload, length);
+      break;
+
+    case WStype_ERROR:
+      Serial.println("[Chint WS] Communication error");
+      break;
+
+    default:
+      break;
+  }
+}
+
+void MQTTManager::handleChintMessage(const uint8_t *payload, size_t length) {
+  StaticJsonDocument<768> doc;
+  DeserializationError err = deserializeJson(doc, payload, length);
+  if (err) return;
+
+  float v = 0.0f;
+  float a = 0.0f;
+  float raw_w = 0.0f;
+  float pf = 1.0f;
+  float f = 50.0f;
+  float imp_kwh = -1.0f;
+  float exp_kwh = -1.0f;
+  bool valid = false;
+
+  // Case 1: Clean stream JSON or welcome packet from Chint Master
+  if (doc.containsKey("type")) {
+    const char *type = doc["type"] | "";
+    if (strcmp(type, "telemetry") == 0 || strcmp(type, "welcome") == 0) {
+      bool meterOnline = doc["meter_online"] | true;
+      if (!meterOnline) {
+        // Physical Chint meter not responding to Xiao; ignore to let fallback take over
+        return;
+      }
+      if (doc.containsKey("volts") && doc.containsKey("watts")) {
+        v = doc["volts"].as<float>();
+        raw_w = doc["watts"].as<float>();
+        a = doc["amps"] | 0.0f;
+        pf = doc["pf"] | 1.0f;
+        f = doc["freq"] | 50.0f;
+        imp_kwh = doc["import_kwh"] | -1.0f;
+        exp_kwh = doc["export_kwh"] | -1.0f;
+        valid = (!std::isnan(v) && v >= 180.0f && v <= 280.0f);
+      }
+    }
+  }
+  // Case 2: Shelly RPC NotifyStatus format emitted by Chint Master
+  else if (doc.containsKey("params")) {
+    JsonObject par = doc["params"];
+    if (par.containsKey("em1:0")) {
+      JsonObject em1 = par["em1:0"];
+      v = em1["voltage"] | 0.0f;
+      raw_w = em1["act_power"] | 0.0f;
+      a = em1["current"] | 0.0f;
+      pf = em1["pf"] | 1.0f;
+      f = em1["freq"] | 50.0f;
+      valid = (!std::isnan(v) && v >= 180.0f && v <= 280.0f);
+    }
+    if (par.containsKey("em1data:0")) {
+      JsonObject d = par["em1data:0"];
+      if (d.containsKey("total_act_energy")) imp_kwh = d["total_act_energy"].as<float>() / 1000.0f;
+      if (d.containsKey("total_act_ret_energy")) exp_kwh = d["total_act_ret_energy"].as<float>() / 1000.0f;
+    }
+  }
+
+  if (!valid) return;
+
+  uint32_t now = millis();
+  _lastChintMsgTime = now;
+
+  // Sync energy accumulators if available.
+  // Guard: if Chint was offline and Shelly was tracking energy, only accept
+  // Chint's reading if it is within 1 kWh of the current stored value to
+  // prevent large jumps from corrupting the accumulator (#7).
+  if (imp_kwh >= 0.0f || exp_kwh >= 0.0f) {
+    MeterTelemetry cur = MeterState::getGrid();
+    bool wasOffline = !isChintRecent(CHINT_TIMEOUT_MS + 500); // just reconnected?
+    if (wasOffline) {
+      float impDelta = (imp_kwh >= 0.0f) ? std::fabs(imp_kwh - cur.import_kwh) : 0.0f;
+      float expDelta = (exp_kwh >= 0.0f) ? std::fabs(exp_kwh - cur.export_kwh) : 0.0f;
+      if (impDelta > 1.0f || expDelta > 1.0f) {
+        Serial.printf("[Chint Energy] Divergence detected after reconnect: "
+                      "stored=%.2f/%.2f chint=%.2f/%.2f – ignoring this reading.\n",
+                      cur.import_kwh, cur.export_kwh, imp_kwh, exp_kwh);
+        // Accept power data but skip energy update this cycle
+        imp_kwh = -1.0f;
+        exp_kwh = -1.0f;
+      }
+    }
+    if (imp_kwh >= 0.0f || exp_kwh >= 0.0f) {
+      MeterState::updateGridEnergy(imp_kwh, exp_kwh);
+    }
+  }
+
+  if (!canChintUpdateGrid()) {
+    return;
+  }
+
+  _lastGridMsgTime = now;
+
+  if (_gridWatchdogTriggered || !_modbusServer.isEnabled()) {
+    Serial.println("[Chint WS Fallback] Valid telemetry received, restoring RS485.");
+    _modbusServer.setEnabled(true);
+    _gridWatchdogTriggered = false;
+  }
+
+  // Invert sign for Hoymiles zero-export control loop:
+  // Grid import is negative kW, export is positive kW (consistent with Shelly & MeterState)
+  float p_kw = 0.0f;
+  if (!std::isnan(raw_w) && raw_w > -15000.0f && raw_w < 15000.0f) {
+    float filtered_w = _gridFilter.apply(raw_w);
+    p_kw = (filtered_w / 1000.0f) * -1.0f;
+  }
+
+  float s_kw = 0.0f;
+  float q_kvar = 0.0f;
+  if (v > 0.0f && a >= 0.0f && a < 250.0f) {
+    s_kw = (v * a) / 1000.0f;
+    float p_abs = std::fabs(p_kw);
+    if (s_kw > p_abs) {
+      q_kvar = std::sqrt(s_kw * s_kw - p_abs * p_abs);
+    }
+  }
+
+  if (std::isnan(pf) || pf < -1.0f || pf > 1.0f) pf = 1.0f;
+  if (std::isnan(f) || f < 45.0f || f > 55.0f) f = 50.0f;
+
+  MeterState::updateGridRealtime(v, a, p_kw, s_kw, q_kvar, pf, f);
+}
+
+void MQTTManager::onShellyWsEvent(WStype_t type, uint8_t *payload, size_t length) {
   switch (type) {
     case WStype_DISCONNECTED:
       _shellyWsConnected = false;
@@ -239,8 +476,8 @@ void MQTTManager::onWsEvent(WStype_t type, uint8_t *payload, size_t length) {
     case WStype_CONNECTED:
       _shellyWsConnected = true;
       Serial.printf("[Shelly WS] Connected to ws://%s:%d%s\n", SHELLY_IP, SHELLY_WS_PORT, SHELLY_WS_PATH);
-      // Immediately request full status (both real-time and energy totals)
-      _wsClient.sendTXT("{\"id\":10,\"src\":\"esp32\",\"method\":\"Shelly.GetStatus\"}");
+      // Immediately request full status
+      _wsShelly.sendTXT("{\"id\":10,\"src\":\"esp32\",\"method\":\"Shelly.GetStatus\"}");
       break;
 
     case WStype_TEXT:
@@ -310,60 +547,56 @@ void MQTTManager::handleShellyMessage(const uint8_t *payload, size_t length) {
   if (!em1.isNull() && em1.containsKey("voltage")) {
     float v = em1["voltage"].as<float>();
     if (!std::isnan(v) && v >= 180.0f && v <= 280.0f) {
-      _lastGridMsgTime = millis();
-      if (_gridWatchdogTriggered || !_modbusServer.isEnabled()) {
-        Serial.println("[Shelly WS] Valid voltage received, restoring RS485.");
-        _modbusServer.setEnabled(true);
-        _gridWatchdogTriggered = false;
-      }
-
-      float c = 0.0f;
-      if (em1.containsKey("current")) {
-        float raw_c = em1["current"].as<float>();
-        if (!std::isnan(raw_c) && raw_c >= 0.0f && raw_c < 250.0f) c = raw_c;
-      }
-
-      float p_kw = 0.0f;
-      if (em1.containsKey("act_power")) {
-        float raw_p = em1["act_power"].as<float>();
-        if (!std::isnan(raw_p) && raw_p > -15000.0f && raw_p < 15000.0f) {
-          // Invert sign for Hoymiles: Grid import is negative, export is positive
-          p_kw = (raw_p / 1000.0f) * -1.0f;
+      _lastShellyMsgTime = millis();
+      if (canShellyUpdateGrid()) {
+        _lastGridMsgTime = millis();
+        if (_gridWatchdogTriggered || !_modbusServer.isEnabled()) {
+          Serial.println("[Shelly WS Fallback] Valid voltage received, restoring RS485.");
+          _modbusServer.setEnabled(true);
+          _gridWatchdogTriggered = false;
         }
-      }
 
-      float s_kw = 0.0f;
-      float q_kvar = 0.0f;
-      if (em1.containsKey("aprt_power")) {
-        float raw_s = em1["aprt_power"].as<float>();
-        if (!std::isnan(raw_s) && raw_s >= 0.0f && raw_s < 15000.0f) {
-          s_kw = raw_s / 1000.0f;
-          float p_abs = std::fabs(p_kw);
-          if (s_kw > p_abs) {
-            q_kvar = std::sqrt(s_kw * s_kw - p_abs * p_abs);
+        float c = 0.0f;
+        if (em1.containsKey("current")) {
+          float raw_c = em1["current"].as<float>();
+          if (!std::isnan(raw_c) && raw_c >= 0.0f && raw_c < 250.0f) c = raw_c;
+        }
+
+        float p_kw = 0.0f;
+        if (em1.containsKey("act_power")) {
+          float raw_p = em1["act_power"].as<float>();
+          if (!std::isnan(raw_p) && raw_p > -15000.0f && raw_p < 15000.0f) {
+            float filtered_w = _gridFilter.apply(raw_p);
+            // Invert sign for Hoymiles: Grid import is negative, export is positive
+            p_kw = (filtered_w / 1000.0f) * -1.0f;
           }
         }
-      }
 
-      float pf = 1.0f;
-      if (em1.containsKey("pf")) {
-        float raw_pf = em1["pf"].as<float>();
-        if (!std::isnan(raw_pf) && raw_pf >= -1.0f && raw_pf <= 1.0f) pf = raw_pf;
-      }
+        float s_kw = 0.0f;
+        float q_kvar = 0.0f;
+        if (em1.containsKey("aprt_power")) {
+          float raw_s = em1["aprt_power"].as<float>();
+          if (!std::isnan(raw_s) && raw_s >= 0.0f && raw_s < 15000.0f) {
+            s_kw = raw_s / 1000.0f;
+            float p_abs = std::fabs(p_kw);
+            if (s_kw > p_abs) {
+              q_kvar = std::sqrt(s_kw * s_kw - p_abs * p_abs);
+            }
+          }
+        }
 
-      float f = 50.0f;
-      if (em1.containsKey("freq")) {
-        float raw_f = em1["freq"].as<float>();
-        if (!std::isnan(raw_f) && raw_f > 45.0f && raw_f < 55.0f) f = raw_f;
-      }
+        float pf = 1.0f;
+        if (em1.containsKey("pf")) {
+          float raw_pf = em1["pf"].as<float>();
+          if (!std::isnan(raw_pf) && raw_pf >= -1.0f && raw_pf <= 1.0f) pf = raw_pf;
+        }
 
-#if ENABLE_ESPNOW
-      bool useShellyGrid = (GRID_SOURCE_PRIORITY == 0) || 
-                           (GRID_SOURCE_PRIORITY == 2 && !ESPNowReceiver::isRecent());
-#else
-      bool useShellyGrid = true;
-#endif
-      if (useShellyGrid) {
+        float f = 50.0f;
+        if (em1.containsKey("freq")) {
+          float raw_f = em1["freq"].as<float>();
+          if (!std::isnan(raw_f) && raw_f > 45.0f && raw_f < 55.0f) f = raw_f;
+        }
+
         MeterState::updateGridRealtime(v, c, p_kw, s_kw, q_kvar, pf, f);
       }
     }
@@ -371,18 +604,21 @@ void MQTTManager::handleShellyMessage(const uint8_t *payload, size_t length) {
 
   // 2. Process Energy Accumulators
   if (!em1data.isNull()) {
-    float import_kwh = -1.0f;
-    float export_kwh = -1.0f;
+    bool chintActive = isChintRecent(CHINT_TIMEOUT_MS);
+    if (!chintActive) {
+      float import_kwh = -1.0f;
+      float export_kwh = -1.0f;
 
-    if (em1data.containsKey("total_act_energy")) {
-      import_kwh = em1data["total_act_energy"].as<float>() / 1000.0f;
-    }
-    if (em1data.containsKey("total_act_ret_energy")) {
-      export_kwh = em1data["total_act_ret_energy"].as<float>() / 1000.0f;
-    }
+      if (em1data.containsKey("total_act_energy")) {
+        import_kwh = em1data["total_act_energy"].as<float>() / 1000.0f;
+      }
+      if (em1data.containsKey("total_act_ret_energy")) {
+        export_kwh = em1data["total_act_ret_energy"].as<float>() / 1000.0f;
+      }
 
-    if (import_kwh >= 0.0f || export_kwh >= 0.0f) {
-      MeterState::updateGridEnergy(import_kwh, export_kwh);
+      if (import_kwh >= 0.0f || export_kwh >= 0.0f) {
+        MeterState::updateGridEnergy(import_kwh, export_kwh);
+      }
     }
   }
 }
@@ -420,6 +656,8 @@ void MQTTManager::handleOpenDtuYield(const uint8_t *payload, unsigned int length
 
   float y = atof(buf);
   if (!std::isnan(y) && y >= 0.0f) {
+    _lastPvMsgTime = millis();
+    _pvWatchdogTriggered = false;
     MeterState::updatePvYield(y);
   }
 }
@@ -427,145 +665,49 @@ void MQTTManager::handleOpenDtuYield(const uint8_t *payload, unsigned int length
 void MQTTManager::checkWatchdogs() {
   uint32_t now = millis();
 
-#if ENABLE_ESPNOW
-  if (ESPNowReceiver::isRecent(WATCHDOG_TIMEOUT_SEC * 1000)) {
-    _lastGridMsgTime = now;
-    if (_gridWatchdogTriggered || !_modbusServer.isEnabled()) {
-      Serial.println("[ESP-NOW] Valid packet received, restoring RS485.");
-      _modbusServer.setEnabled(true);
-      _gridWatchdogTriggered = false;
-    }
-  }
-#endif
 
-  // 1. Grid watchdog (10 seconds timeout)
+  // 1. Grid watchdog (10 seconds timeout without ANY valid source)
   if (!_gridWatchdogTriggered && (now - _lastGridMsgTime > (WATCHDOG_TIMEOUT_SEC * 1000))) {
-    Serial.println("[FAILSAFE] Grid Shelly WS timeout! Disabling RS485 to force Hoymiles safe state.");
+    Serial.println("[FAILSAFE] Grid data timeout (both Chint and Shelly unavailable)! Disabling RS485 to force Hoymiles safe state.");
     _modbusServer.setEnabled(false);
     _gridWatchdogTriggered = true;
   }
 
   // 2. PV watchdog (10 seconds timeout)
-#if (PV_SOURCE_MODE != 0)
   if (!_pvWatchdogTriggered && (now - _lastPvMsgTime > (WATCHDOG_TIMEOUT_SEC * 1000))) {
-#if (PV_SOURCE_MODE == 2)
-    Serial.println("[FAILSAFE] Hoymiles DTU timeout! Zeroing PV power.");
-#else
     Serial.println("[FAILSAFE] PV OpenDTU MQTT timeout! Zeroing PV power.");
-#endif
     MeterState::zeroPvPower();
     _pvWatchdogTriggered = true;
   }
-#endif
 }
 
-void MQTTManager::publishHADiscovery() {
-  if (_haDiscoveryPublished) return;
+void MQTTManager::checkSourceTransition() {
+  const char *current = getActiveGridSource();
+  if (strcmp(current, _lastKnownSource) != 0) {
+    Serial.printf("[Source] Grid source changed: %s -> %s\n", _lastKnownSource, current);
+    SourceEvent &ev = _sourceEvents[_sourceEventHead];
+    ev.timestamp_s = millis() / 1000;
+    strncpy(ev.from, _lastKnownSource, sizeof(ev.from) - 1);
+    ev.from[sizeof(ev.from) - 1] = '\0';
+    strncpy(ev.to, current, sizeof(ev.to) - 1);
+    ev.to[sizeof(ev.to) - 1] = '\0';
+    _sourceEventHead = (_sourceEventHead + 1) % SOURCE_EVENT_HISTORY;
+    if (_sourceEventCount < SOURCE_EVENT_HISTORY) _sourceEventCount++;
+    strncpy(_lastKnownSource, current, sizeof(_lastKnownSource) - 1);
+    _lastKnownSource[sizeof(_lastKnownSource) - 1] = '\0';
 
-  const char *dev = "\"dev\":{\"ids\":[\"ddsu666_emulator\"],\"name\":\"Hoymiles DDSU666 Emulator\",\"mf\":\"LILYGO\",\"mdl\":\"T-CAN485\"}";
-
-  struct SensorDef {
-    const char *id;
-    const char *name;
-    const char *unit;
-    const char *dev_cla;
-    const char *stat_cla;
-    const char *val_key;
-    const char *cat;
-  };
-
-  SensorDef sensors[] = {
-    { "grid_power", "Grid Active Power", "W", "power", "measurement", "grid_w", nullptr },
-    { "grid_voltage", "Grid Voltage", "V", "voltage", "measurement", "grid_v", nullptr },
-    { "grid_current", "Grid Current", "A", "current", "measurement", "grid_a", nullptr },
-    { "grid_frequency", "Grid Frequency", "Hz", "frequency", "measurement", "grid_hz", nullptr },
-    { "grid_pf", "Grid Power Factor", nullptr, "power_factor", "measurement", "grid_pf", nullptr },
-    { "grid_import_kwh", "Grid Import Energy", "kWh", "energy", "total_increasing", "grid_imp_kwh", nullptr },
-    { "grid_export_kwh", "Grid Export Energy", "kWh", "energy", "total_increasing", "grid_exp_kwh", nullptr },
-    { "pv_power", "PV Active Power", "W", "power", "measurement", "pv_w", nullptr },
-    { "pv_yield_kwh", "PV Total Yield", "kWh", "energy", "total_increasing", "pv_kwh", nullptr },
-    { "inv_rate_hz", "Inverter Modbus Rate", "Hz", nullptr, "measurement", "inv_hz", "diagnostic" },
-    { "wifi_rssi", "WiFi Signal", "dBm", "signal_strength", "measurement", "rssi", "diagnostic" },
-    { "espnow_rssi", "ESP-NOW Signal", "dBm", "signal_strength", "measurement", "espnow_rssi", "diagnostic" },
-    { "espnow_packets", "ESP-NOW Packets", nullptr, nullptr, "total_increasing", "espnow_pkts", "diagnostic" }
-  };
-
-  char topic[80];
-  char payload[384];
-
-  for (const auto &s : sensors) {
-    snprintf(topic, sizeof(topic), "homeassistant/sensor/ddsu666/%s/config", s.id);
-
-    int offset = snprintf(payload, sizeof(payload),
-      "{\"name\":\"%s\",\"stat_t\":\"ddsu666/telemetry\",\"val_tpl\":\"{{ value_json.%s }}\",\"uniq_id\":\"ddsu666_%s\",%s",
-      s.name, s.val_key, s.id, dev);
-
-    if (s.unit) {
-      offset += snprintf(payload + offset, sizeof(payload) - offset, ",\"unit_of_meas\":\"%s\"", s.unit);
-    }
-    if (s.dev_cla) {
-      offset += snprintf(payload + offset, sizeof(payload) - offset, ",\"dev_cla\":\"%s\"", s.dev_cla);
-    }
-    if (s.stat_cla) {
-      offset += snprintf(payload + offset, sizeof(payload) - offset, ",\"stat_cla\":\"%s\"", s.stat_cla);
-    }
-    if (s.cat) {
-      offset += snprintf(payload + offset, sizeof(payload) - offset, ",\"ent_cat\":\"%s\"", s.cat);
-    }
-    snprintf(payload + offset, sizeof(payload) - offset, "}");
-
-    _mqttClient.publish(topic, payload, true); // Retain true for HA discovery
+    // Reset filter on source handoff so new source starts fresh immediately
+    _gridFilter.reset();
   }
-
-  _haDiscoveryPublished = true;
-  Serial.println("[HA Discovery] Published 13 sensor configs to MQTT broker.");
 }
 
-void MQTTManager::publishTelemetry() {
-  MeterTelemetry g = MeterState::getGrid();
-  MeterTelemetry p = MeterState::getPv();
+void MQTTManager::handleEspNowPv(float watts, float yield_kwh) {
+  if (std::isnan(watts) || watts < 0.0f || watts > 25000.0f) return;
+  if (std::isnan(yield_kwh) || yield_kwh < 0.0f) return;
 
-#if ENABLE_ESPNOW
-  EspNowStats es = ESPNowReceiver::getStats();
-  int espnowRssi = (int)es.rssi;
-  uint32_t espnowPkts = es.packet_count;
-#else
-  int espnowRssi = 0;
-  uint32_t espnowPkts = 0;
-#endif
-
-  char payload[384];
-  snprintf(payload, sizeof(payload),
-    "{"
-      "\"grid_w\":%.1f,"
-      "\"grid_v\":%.1f,"
-      "\"grid_a\":%.2f,"
-      "\"grid_hz\":%.1f,"
-      "\"grid_pf\":%.2f,"
-      "\"grid_imp_kwh\":%.2f,"
-      "\"grid_exp_kwh\":%.2f,"
-      "\"pv_w\":%.1f,"
-      "\"pv_kwh\":%.2f,"
-      "\"inv_hz\":%.1f,"
-      "\"rssi\":%d,"
-      "\"espnow_rssi\":%d,"
-      "\"espnow_pkts\":%lu"
-    "}",
-    (double)(g.active_power * -1000.0f), // Invert to physical convention (+ = import, - = export)
-    (double)g.voltage,
-    (double)g.current,
-    (double)g.frequency,
-    (double)g.power_factor,
-    (double)g.import_kwh,
-    (double)g.export_kwh,
-    (double)(p.active_power * 1000.0f),
-    (double)p.import_kwh,
-    (double)_modbusServer.getQueryRateHz(),
-    WiFi.RSSI(),
-    espnowRssi,
-    (unsigned long)espnowPkts
-  );
-
-  _mqttClient.publish("ddsu666/telemetry", payload, false);
+  MeterState::updatePvPower(watts);
+  MeterState::updatePvYield(yield_kwh);
+  _lastPvMsgTime = millis();
+  _pvWatchdogTriggered = false;
 }
 

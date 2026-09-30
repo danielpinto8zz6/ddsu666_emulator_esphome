@@ -13,6 +13,7 @@
 static ModbusRTUServer s_modbusServer;
 static MQTTManager s_mqttManager(s_modbusServer);
 static bool s_webInitialized = false;
+volatile UBaseType_t g_networkTaskStackHWM = 0;  // sampled every loop iteration (#4)
 
 // High-Priority Real-Time Modbus Task on Core 1
 void modbusTask(void *param) {
@@ -22,6 +23,10 @@ void modbusTask(void *param) {
 
   while (true) {
     esp_task_wdt_reset();
+    if (g_isUpdatingFirmware) {
+      vTaskDelay(pdMS_TO_TICKS(50));
+      continue;
+    }
     s_modbusServer.handle();
     taskYIELD();
   }
@@ -49,6 +54,9 @@ void networkTask(void *param) {
     } else {
       s_webInitialized = false;
     }
+
+    // Sample stack high-water mark for /health diagnostic (#4)
+    g_networkTaskStackHWM = uxTaskGetStackHighWaterMark(NULL);
 
     vTaskDelay(pdMS_TO_TICKS(10)); // 10ms loop iteration (100 context switches/sec)
   }
@@ -94,7 +102,7 @@ void setup() {
   xTaskCreatePinnedToCore(
     networkTask,
     "NetworkTask",
-    8192,
+    12288,          // Increased from 8192: WS clients + MQTT + JSON (#4)
     NULL,
     1,
     NULL,
