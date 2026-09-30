@@ -1,5 +1,5 @@
 #include "web_server.h"
-#include "mqtt_manager.h"
+#include "telemetry/telemetry_manager.h"
 #include "config.h"
 #include "web_ui_gz.h"
 #include <ArduinoJson.h>
@@ -17,8 +17,8 @@ public:
 
 static SafeWebServer s_server(80);
 
-static ModbusRTUServer *s_modbus = nullptr;
-static MQTTManager     *s_mqtt   = nullptr;
+static ModbusRTUServer  *s_modbus    = nullptr;
+static TelemetryManager *s_telemetry = nullptr;
 static char s_jsonBuffer[1024];
 volatile bool g_isUpdatingFirmware = false;
 extern volatile UBaseType_t g_networkTaskStackHWM;  // set in main.cpp
@@ -31,20 +31,20 @@ static void handleHealthJson() {
   MeterTelemetry pv   = MeterState::getPv();
 
   uint32_t now = millis();
-  float gridAge = (now - s_mqtt->getLastGridMsgTime()) / 1000.0f;
-  float chintAge = (s_mqtt->getLastChintMsgTime() != 0) ? (now - s_mqtt->getLastChintMsgTime()) / 1000.0f : -1.0f;
-  float shellyAge = (s_mqtt->getLastShellyMsgTime() != 0) ? (now - s_mqtt->getLastShellyMsgTime()) / 1000.0f : -1.0f;
-  float pvAge   = (now - s_mqtt->getLastPvMsgTime()) / 1000.0f;
+  float gridAge = (now - s_telemetry->getLastGridMsgTime()) / 1000.0f;
+  float chintAge = (s_telemetry->getChintSource().getLastMessageTime() != 0) ? (now - s_telemetry->getChintSource().getLastMessageTime()) / 1000.0f : -1.0f;
+  float shellyAge = (s_telemetry->getShellySource().getLastMessageTime() != 0) ? (now - s_telemetry->getShellySource().getLastMessageTime()) / 1000.0f : -1.0f;
+  float pvAge   = (now - s_telemetry->getLastPvMsgTime()) / 1000.0f;
 
-  bool gridSourceActive = s_mqtt->isChintRecent() || s_mqtt->isShellyWsConnected();
+  bool gridSourceActive = s_telemetry->getChintSource().isRecent() || s_telemetry->getShellySource().isConnected();
 
-  bool healthy = s_mqtt->isWiFiConnected() && 
+  bool healthy = s_telemetry->isWiFiConnected() && 
                  gridSourceActive && 
                  s_modbus->isEnabled();
 
   float gw = MeterState::getGridWatts();
   const char *flow = (gw > 5.0f) ? "IMPORT" : ((gw < -5.0f) ? "EXPORT" : "BALANCED");
-  const char *source = s_mqtt->getActiveGridSource();
+  const char *source = s_telemetry->getActiveGridSource();
 
   uint32_t lastQueryTime = s_modbus ? s_modbus->getLastQueryTime() : 0;
   float modbusAge = (lastQueryTime != 0) ? (now - lastQueryTime) / 1000.0f : -1.0f;
@@ -61,27 +61,27 @@ static void handleHealthJson() {
   doc["free_heap"] = (uint32_t)ESP.getFreeHeap();
 
   JsonObject pri = doc.createNestedObject("priority");
-  pri["mode"] = (uint8_t)s_mqtt->getGridPriority();
-  pri["description"] = s_mqtt->getGridPriorityDescription();
+  pri["mode"] = (uint8_t)s_telemetry->getGridPriority();
+  pri["description"] = s_telemetry->getGridPriorityDescription();
 
   JsonObject wifi = doc.createNestedObject("wifi");
-  wifi["connected"] = s_mqtt->isWiFiConnected();
+  wifi["connected"] = s_telemetry->isWiFiConnected();
   wifi["ip"] = WiFi.localIP().toString();
   wifi["rssi"] = WiFi.RSSI();
 
 
   JsonObject chint = doc.createNestedObject("chint");
-  chint["ws_connected"] = s_mqtt->isChintWsConnected();
-  chint["ip"] = s_mqtt->getChintIp();
+  chint["ws_connected"] = s_telemetry->getChintSource().isConnected();
+  chint["ip"] = s_telemetry->getChintSource().getIp();
   chint["age_sec"] = (chintAge >= 0) ? round1(chintAge) : -1.0f;
 
   JsonObject shelly = doc.createNestedObject("shelly");
-  shelly["ws_connected"] = s_mqtt->isShellyWsConnected();
-  shelly["ip"] = s_mqtt->getShellyIp();
+  shelly["ws_connected"] = s_telemetry->getShellySource().isConnected();
+  shelly["ip"] = s_telemetry->getShellySource().getIp();
   shelly["age_sec"] = (shellyAge >= 0) ? round1(shellyAge) : -1.0f;
 
   JsonObject opendtu = doc.createNestedObject("opendtu");
-  opendtu["mqtt_connected"] = s_mqtt->isMQTTConnected();
+  opendtu["mqtt_connected"] = s_telemetry->getOpenDtuSource().isConnected();
   opendtu["age_sec"] = round1(pvAge);
 
   JsonObject modbus = doc.createNestedObject("modbus");
@@ -113,9 +113,9 @@ static void handleHealthJson() {
 
   // Source-transition event history (#5)
   JsonArray evArr = doc.createNestedArray("source_events");
-  uint8_t total = s_mqtt->getSourceEventCount();
-  uint8_t head  = s_mqtt->getSourceEventHead();
-  const SourceEvent *evs = s_mqtt->getSourceEvents();
+  uint8_t total = s_telemetry->getSourceEventCount();
+  uint8_t head  = s_telemetry->getSourceEventHead();
+  const SourceEvent *evs = s_telemetry->getSourceEvents();
   // Iterate oldest -> newest
   for (uint8_t i = 0; i < total; i++) {
     uint8_t idx = (head - total + i + SOURCE_EVENT_HISTORY) % SOURCE_EVENT_HISTORY;
@@ -159,9 +159,9 @@ static bool isOtaAuthorized() {
   return true;
 }
 
-void initWebServer(ModbusRTUServer &modbus, MQTTManager &mqtt) {
-  s_modbus = &modbus;
-  s_mqtt   = &mqtt;
+void initWebServer(ModbusRTUServer &modbus, TelemetryManager &telemetry) {
+  s_modbus    = &modbus;
+  s_telemetry = &telemetry;
 
   const char *headerkeys[] = {"X-OTA-Password", "Authorization"};
   s_server.collectHeaders(headerkeys, 2);
@@ -173,16 +173,16 @@ void initWebServer(ModbusRTUServer &modbus, MQTTManager &mqtt) {
   s_server.on("/api/priority", HTTP_ANY, []() {
     if (s_server.hasArg("mode")) {
       uint8_t mode = (uint8_t)s_server.arg("mode").toInt();
-      if (mode <= 3 && s_mqtt) {
-        s_mqtt->setGridPriority((GridPriorityMode)mode);
+      if (mode <= 3 && s_telemetry) {
+        s_telemetry->setGridPriority((GridPriorityMode)mode);
         s_server.sendHeader("Access-Control-Allow-Origin", "*");
-        s_server.send(200, "application/json", "{\"status\":\"OK\",\"mode\":" + String(mode) + ",\"desc\":\"" + s_mqtt->getGridPriorityDescription() + "\"}");
+        s_server.send(200, "application/json", "{\"status\":\"OK\",\"mode\":" + String(mode) + ",\"desc\":\"" + s_telemetry->getGridPriorityDescription() + "\"}");
         return;
       }
     }
-    if (s_mqtt) {
+    if (s_telemetry) {
       s_server.sendHeader("Access-Control-Allow-Origin", "*");
-      s_server.send(200, "application/json", "{\"mode\":" + String((uint8_t)s_mqtt->getGridPriority()) + ",\"desc\":\"" + s_mqtt->getGridPriorityDescription() + "\"}");
+      s_server.send(200, "application/json", "{\"mode\":" + String((uint8_t)s_telemetry->getGridPriority()) + ",\"desc\":\"" + s_telemetry->getGridPriorityDescription() + "\"}");
       return;
     }
     s_server.send(400, "application/json", "{\"error\":\"Invalid request\"}");

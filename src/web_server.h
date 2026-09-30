@@ -8,9 +8,8 @@
 
 extern volatile bool g_isUpdatingFirmware;
 
-// Forward declaration of MQTTManager
-class MQTTManager;
+// Forward declaration of TelemetryManager
+class TelemetryManager;
 
-void initWebServer(ModbusRTUServer &modbus, MQTTManager &mqtt);
+void initWebServer(ModbusRTUServer &modbus, TelemetryManager &telemetry);
 void handleWebServer();
-

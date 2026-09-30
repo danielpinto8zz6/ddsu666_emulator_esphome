@@ -5,13 +5,13 @@
 #include "secrets.h"
 #include "meter_data.h"
 #include "modbus_rtu.h"
-#include "mqtt_manager.h"
+#include "telemetry/telemetry_manager.h"
 #include "web_server.h"
 
 #define WDT_TIMEOUT_SECONDS 15
 
-static ModbusRTUServer s_modbusServer;
-static MQTTManager s_mqttManager(s_modbusServer);
+static ModbusRTUServer  s_modbusServer;
+static TelemetryManager s_telemetryManager(s_modbusServer);
 static bool s_webInitialized = false;
 volatile UBaseType_t g_networkTaskStackHWM = 0;  // sampled every loop iteration (#4)
 
@@ -32,22 +32,22 @@ void modbusTask(void *param) {
   }
 }
 
-// Networking, MQTT, and Web Server Task on Core 0
+// Networking, Telemetry, and Web Server Task on Core 0
 void networkTask(void *param) {
   Serial.printf("[Network Task] Running on Core %d\n", xPortGetCoreID());
   esp_task_wdt_add(NULL);
 
-  s_mqttManager.begin();
+  s_telemetryManager.begin();
 
   while (true) {
     esp_task_wdt_reset(); // Feed watchdog
 
-    s_mqttManager.loop();
+    s_telemetryManager.loop();
 
     // Start web server once Wi-Fi has acquired a valid IP address
-    if (s_mqttManager.isWiFiConnected()) {
+    if (s_telemetryManager.isWiFiConnected()) {
       if (!s_webInitialized) {
-        initWebServer(s_modbusServer, s_mqttManager);
+        initWebServer(s_modbusServer, s_telemetryManager);
         s_webInitialized = true;
       }
       handleWebServer();
