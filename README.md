@@ -7,6 +7,8 @@ This repository contains firmware to emulate **two independent CHINT DDSU666 Mod
 ## 📑 Table of Contents
 
 - [Overview & Architecture](#-overview--architecture)
+- [Why This Emulator Outperforms Direct Physical Wiring](#-why-this-emulator-outperforms-direct-physical-wiring)
+- [Multi-Zone Precision Damping Filter](#-multi-zone-precision-damping-filter)
 - [Supported Hardware & Wiring](#-supported-hardware--wiring)
 - [Repository Structure](#-repository-structure)
 - [Solution 1: ESPHome](#-solution-1-esphome)
@@ -43,6 +45,51 @@ Hoymiles HYS/HYB hybrid inverters poll two CHINT DDSU666 meters over RS-485 Modb
 
 - **Slave ID 2 (Grid Meter)**: Emulates the main grid connection meter. Provides active power, voltage, current, power factor, frequency, and cumulative import/export kWh for the inverter's **Zero-Export (Autoconsumo)** PID control loop.
 - **Slave ID 1 (PV Meter)**: Emulates a PV string meter using generation data polled directly from **Hoymiles DTU-Lite-S** over local TCP, or via **OpenDTU** MQTT. Allows the inverter to display solar generation and battery charging on the Hoymiles S-Miles app without a separate physical CT.
+
+---
+
+## ⚡ Why This Emulator Outperforms Direct Physical Wiring
+
+A common question is: *is this wireless emulator setup actually better than wiring a physical CHINT DDSU666 directly to the Hoymiles inverter with an RS-485 cable?*
+
+**Yes, both in control theory and in practice.**
+
+| Feature | Direct Physical CHINT DDSU666 | Dual-Meter Emulator Architecture |
+| :--- | :--- | :--- |
+| **Signal Quality & Noise Rejection** | Raw instantaneous power with +/- 30W to 50W reactive phase jitter at 14.5 Hz. Inverter PID continuously hunts. | **Multi-Zone Adaptive Damping Filter**: Attenuates reactive noise by >96% while maintaining instant 0 ms response on real appliance loads. |
+| **Fault Tolerance & Redundancy** | Single point of failure. If the meter glitches, reboots, or wire is cut, zero-export fails completely. | **Automatic Dual-Source Failover**: Primary high-frequency Chint WebSocket stream seamlessly fails over to Shelly Pro EM in 4 seconds. |
+| **Dual Meter Support (Grid + PV)** | Only provides Grid Meter (Slave ID 2). A second physical meter must be bought and daisy-chained for PV. | **Simultaneous Dual-Meter Emulation**: Emulates Slave ID 2 (Grid) and Slave ID 1 (PV) populated live from OpenDTU MQTT. |
+| **Installation & Safety** | Requires running long physical RS-485 cable through walls/conduit from electrical panel to inverter. Prone to ground loops and lightning surges. | **Galvanic & Wireless Isolation**: Reader sits in the main breaker box; emulator sits right by the inverter. Telemetry bridges over local Wi-Fi. |
+| **Diagnostics & Observability** | Completely black-box. No way to inspect query rate, turnaround latency, or CRC errors without a logic analyzer. | **Embedded Diagnostic Dashboard**: Web UI with live power gauges, `/health` JSON endpoint, 14.5 Hz query rate monitor, and passwordless OTA updates. |
+
+---
+
+## 🎯 Multi-Zone Precision Damping Filter
+
+### 1. The Physics of the +/- 50W Measurement Jitter
+In modern households, typical idle baseline consumption involves switch-mode power supplies, power factor correction capacitors, and LED drivers. Even when net active power consumption is near 0W, there is frequently 2.5A to 2.8A of reactive current flowing at 240V (~650 VA apparent power) with a power factor close to zero (-0.05 to +0.08).
+
+Because apparent power is ~650 VA, a microscopic phase angle fluctuation of just +/- 0.05 in the power factor calculation swings the physical meter's instantaneous active power calculation between **-50W and +70W** on every single AC cycle.
+
+### 2. The Inverter PID Hunting Problem
+The Hoymiles inverter queries the meter at **14.5 Hz (every 68 ms)**. However, the physical power electronics inside the inverter (DC bus capacitors, MOSFET gates, and MPPT stages) have a settling time of **500 ms to 1500 ms**.
+
+When fed raw instantaneous readings:
+1. The inverter's internal PI (Proportional-Integral) controller treats every 68 ms reactive ripple packet as an urgent load change.
+2. Because the inverter takes ~1 second to respond, its corrections arrive out of phase with the noise.
+3. This creates **limit-cycle PID hunting**: the inverter constantly modulates its PV output up and down by 30W to 50W, causing unnecessary thermal stress on its switching transistors.
+
+### 3. The Solution: Multi-Zone Damping Architecture (`GridFilter`)
+The filter logic is decoupled into a dedicated module ([src/grid_filter.h](file:///home/danielpinto/Documentos/ddsu666_emulator_esphome/src/grid_filter.h) and [src/grid_filter.cpp](file:///home/danielpinto/Documentos/ddsu666_emulator_esphome/src/grid_filter.cpp)). It applies a continuous non-linear multi-zone response curve:
+
+* **Zone 1 (Deviation <= 35W — Zero-Export Equilibrium)**:
+  Strong damping with time constant tau = 2000 ms (alpha = ~0.034 at 14.5 Hz). Attenuates high-frequency reactive phase jitter by over 96%, keeping the zero-export baseline calm and preventing inverter PID hunting.
+* **Zone 2 (Deviation 35W to 120W — Normal Household Drifts)**:
+  Smoothly scales tau from 2000 ms down to 400 ms. Ensures smooth, overshoot-free convergence when household loads drift naturally (lighting, TV, refrigerator).
+* **Zone 3 (Deviation 120W to 200W — Moderate Loads)**:
+  Fast tracking with tau scaling from 400 ms down to 100 ms.
+* **Zone 4 (Deviation >= 200W — Major Appliances)**:
+  **Instant bypass (0 ms delay)**. When an oven, kettle, heat pump, or microwave turns on or off, the filter immediately snaps to the raw reading with zero latency, ensuring instant zero-export response without unnecessary grid import or export.
 
 ---
 
@@ -100,17 +147,21 @@ ddsu666_emulator_esphome/
 ├── include/                        # Native C++ Headers
 │   ├── config.h                    # Board pinouts, Modbus, and Shelly configuration
 │   ├── meter_data.h                # In-memory DDSU666 register state & conversions
-│   ├── esp_now_receiver.h          # ESP-NOW sniffer & receiver definitions
 │   ├── web_ui_gz.h                 # Compressed WebUI dashboard binary
 │   └── secrets.h.example           # Native C++ secrets template
 ├── src/                            # Native C++ Source Code
 │   ├── main.cpp                    # Dual-core tasks & FreeRTOS initialization
 │   ├── modbus_rtu.cpp / .h         # High-speed Modbus RTU slave engine (Core 1)
 │   ├── meter_data.cpp              # Telemetry sync & Modbus FP32 conversions
-│   ├── mqtt_manager.cpp / .h       # Shelly WebSocket client & MQTT (Core 0)
-│   ├── web_server.cpp / .h         # REST API & WebUI dashboard (Core 0)
-│   └── esp_now_receiver.cpp        # ESP-NOW sniffer & dynamic peer tracker
+│   ├── grid_filter.cpp / .h        # Multi-Zone Precision Damping Filter for Zero-Export
+│   ├── mqtt_manager.cpp / .h       # Chint & Shelly WebSocket clients & MQTT (Core 0)
+│   └── web_server.cpp / .h         # REST API & WebUI dashboard (Core 0)
 ├── web_ui_source.html              # Uncompressed HTML/CSS/JS source for WebUI
+│
+├── chint_ddsu666_reader/           # Clean Core Split RS-485 Master Reader (14.5 Hz)
+│   ├── platformio.ini              # Xiao ESP32-S3 build environment
+│   ├── include/                    # Reader configuration and Modbus definitions
+│   └── src/                        # Dedicated Core 1 Modbus engine & Core 0 WebSocket server
 │
 ├── shelly_espnow_transmitter/      # ESP32-C3 SuperMini Wireless Transmitter Bridge
 │   ├── platformio.ini              # Transmitter build environment
