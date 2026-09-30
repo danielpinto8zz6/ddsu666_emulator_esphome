@@ -24,6 +24,8 @@ public:
   const String& getIp() const { return _ip; }
   void setIp(const String &ip);
 
+  bool isGridSource() const override { return true; }
+
 private:
   String _ip;
   uint16_t _port;

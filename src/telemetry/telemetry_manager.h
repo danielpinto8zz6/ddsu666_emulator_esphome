@@ -2,27 +2,38 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
-#include <Preferences.h>
+#include <vector>
 #include "telemetry_types.h"
 #include "telemetry_source.h"
-#include "sources/chint_ws_source.h"
-#include "sources/shelly_ws_source.h"
-#include "sources/opendtu_mqtt_source.h"
-#include "sources/espnow_pv_source.h"
 #include "grid_filter.h"
+#include "grid_arbitrator.h"
 #include "modbus_rtu.h"
 #include "meter_data.h"
+#include "../config/app_config.h"
 
 /**
- * @brief Central Telemetry Manager & Ingestion Hub.
+ * @brief Central Telemetry Manager & Ingestion Hub (SOLID: Open/Closed & Dependency Inversion).
  *
- * Implements ITelemetrySink to receive normalized measurements from any source
- * (WebSocket, MQTT, ESP-NOW), coordinates priority and failover, applies the
- * Multi-Zone GridFilter, and updates the thread-safe Modbus MeterState.
+ * Implements ITelemetrySink to receive normalized measurements from any registered
+ * ITelemetrySource provider, coordinates priority arbitration via IGridArbitrator,
+ * applies power smoothing via IPowerFilter, and updates the thread-safe Modbus MeterState.
  */
 class TelemetryManager : public ITelemetrySink {
 public:
-  TelemetryManager(ModbusRTUServer &modbusServer);
+  TelemetryManager(ModbusRTUServer &modbusServer,
+                   IPowerFilter *filter = nullptr,
+                   IGridArbitrator *arbitrator = nullptr);
+
+  // Strategy Injection (DIP / OCP)
+  void setFilter(IPowerFilter *filter);
+  void setArbitrator(IGridArbitrator *arbitrator);
+  IPowerFilter& getFilter() { return *_filter; }
+  IGridArbitrator& getArbitrator() { return *_arbitrator; }
+
+  // Source Registration (Dependency Injection / OCP)
+  void registerSource(ITelemetrySource *source);
+  ITelemetrySource* getSource(const char *id) const;
+  const std::vector<ITelemetrySource*>& getSources() const { return _sources; }
 
   void begin();
   void loop();
@@ -36,15 +47,9 @@ public:
   int8_t getWiFiRssi() const { return WiFi.RSSI(); }
 
   void setGridPriority(GridPriorityMode mode);
-  GridPriorityMode getGridPriority() const { return _gridPriority; }
+  GridPriorityMode getGridPriority() const;
   const char* getGridPriorityDescription() const;
   const char* getActiveGridSource() const;
-
-  // Source Accessors
-  ChintWsSource& getChintSource() { return _chintSource; }
-  ShellyWsSource& getShellySource() { return _shellySource; }
-  OpenDtuMqttSource& getOpenDtuSource() { return _opendtuSource; }
-  EspNowPvSource& getEspNowSource() { return _espnowSource; }
 
   // Freshness & Diagnostics
   uint32_t getLastGridMsgTime() const { return _lastGridMsgTime; }
@@ -60,18 +65,17 @@ public:
 
 private:
   ModbusRTUServer &_modbusServer;
+  std::vector<ITelemetrySource*> _sources;
 
-  // Concrete Technology Sources
-  ChintWsSource _chintSource;
-  ShellyWsSource _shellySource;
-  OpenDtuMqttSource _opendtuSource;
-  EspNowPvSource _espnowSource;
+  // Signal Conditioning Filter Strategy
+  IPowerFilter *_filter;
+  GridFilter _defaultFilter;
 
-  // Multi-Zone Signal Conditioning Filter
-  GridFilter _gridFilter;
+  // Priority Arbitration Strategy
+  IGridArbitrator *_arbitrator;
+  DefaultGridArbitrator _defaultArbitrator;
 
-  // Arbitration & State
-  GridPriorityMode _gridPriority = DEFAULT_GRID_PRIORITY_MODE;
+  // State Timers & Failsafes
   uint32_t _lastGridMsgTime = 0;
   uint32_t _lastPvMsgTime = 0;
   bool _gridWatchdogTriggered = false;
@@ -82,10 +86,6 @@ private:
   uint8_t _sourceEventHead = 0;
   uint8_t _sourceEventCount = 0;
   char _lastKnownSource[16];
-
-  // Config settings
-  String _wifiSsid;
-  String _wifiPassword;
 
   void connectWiFi();
   void checkWatchdogs();

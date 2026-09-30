@@ -22,6 +22,8 @@ public:
 
   void handlePacket(const uint8_t *data, int len);
 
+  bool isPvSource() const override { return true; }
+
 private:
   ITelemetrySink *_sink = nullptr;
   uint32_t _lastMsgTime = 0;

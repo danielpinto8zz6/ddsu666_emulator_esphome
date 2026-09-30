@@ -1,13 +1,12 @@
 #include "web_server.h"
 #include "telemetry/telemetry_manager.h"
+#include "config/app_config.h"
 #include "config.h"
 #include "web_ui_gz.h"
 #include <ArduinoJson.h>
 #include <Update.h>
 #include <esp_task_wdt.h>
 #include <cmath>
-#include <Preferences.h>
-
 
 class SafeWebServer : public WebServer {
 public:
@@ -30,21 +29,26 @@ static void handleHealthJson() {
   MeterTelemetry grid = MeterState::getGrid();
   MeterTelemetry pv   = MeterState::getPv();
 
+  ITelemetrySource *chintSrc   = s_telemetry ? s_telemetry->getSource("CHINT_WS") : nullptr;
+  ITelemetrySource *shellySrc  = s_telemetry ? s_telemetry->getSource("SHELLY_WS") : nullptr;
+  ITelemetrySource *opendtuSrc = s_telemetry ? s_telemetry->getSource("OPENDTU_MQTT") : nullptr;
+
   uint32_t now = millis();
-  float gridAge = (now - s_telemetry->getLastGridMsgTime()) / 1000.0f;
-  float chintAge = (s_telemetry->getChintSource().getLastMessageTime() != 0) ? (now - s_telemetry->getChintSource().getLastMessageTime()) / 1000.0f : -1.0f;
-  float shellyAge = (s_telemetry->getShellySource().getLastMessageTime() != 0) ? (now - s_telemetry->getShellySource().getLastMessageTime()) / 1000.0f : -1.0f;
-  float pvAge   = (now - s_telemetry->getLastPvMsgTime()) / 1000.0f;
+  float gridAge   = s_telemetry ? (now - s_telemetry->getLastGridMsgTime()) / 1000.0f : -1.0f;
+  float chintAge  = (chintSrc && chintSrc->getLastMessageTime() != 0) ? chintSrc->getAgeSeconds() : -1.0f;
+  float shellyAge = (shellySrc && shellySrc->getLastMessageTime() != 0) ? shellySrc->getAgeSeconds() : -1.0f;
+  float pvAge     = s_telemetry ? (now - s_telemetry->getLastPvMsgTime()) / 1000.0f : -1.0f;
 
-  bool gridSourceActive = s_telemetry->getChintSource().isRecent() || s_telemetry->getShellySource().isConnected();
+  bool gridSourceActive = (chintSrc && chintSrc->isRecent(CHINT_TIMEOUT_MS)) ||
+                          (shellySrc && shellySrc->isConnected());
 
-  bool healthy = s_telemetry->isWiFiConnected() && 
+  bool healthy = s_telemetry && s_telemetry->isWiFiConnected() && 
                  gridSourceActive && 
-                 s_modbus->isEnabled();
+                 s_modbus && s_modbus->isEnabled();
 
   float gw = MeterState::getGridWatts();
   const char *flow = (gw > 5.0f) ? "IMPORT" : ((gw < -5.0f) ? "EXPORT" : "BALANCED");
-  const char *source = s_telemetry->getActiveGridSource();
+  const char *source = s_telemetry ? s_telemetry->getActiveGridSource() : "NONE";
 
   uint32_t lastQueryTime = s_modbus ? s_modbus->getLastQueryTime() : 0;
   float modbusAge = (lastQueryTime != 0) ? (now - lastQueryTime) / 1000.0f : -1.0f;
@@ -55,33 +59,34 @@ static void handleHealthJson() {
   float modbusRate = s_modbus ? s_modbus->getQueryRateHz() : 0.0f;
   bool inverterConnected = s_modbus ? s_modbus->isInverterActive(2500) : false;
 
+  const SystemSettings &cfg = AppConfig::getInstance().get();
+
   StaticJsonDocument<1280> doc;
-  doc["status"] = healthy ? "HEALTHY" : (s_modbus->isEnabled() ? "DEGRADED" : "FAILSAFE");
+  doc["status"] = healthy ? "HEALTHY" : ((s_modbus && s_modbus->isEnabled()) ? "DEGRADED" : "FAILSAFE");
   doc["uptime_sec"] = (uint32_t)(millis() / 1000);
   doc["free_heap"] = (uint32_t)ESP.getFreeHeap();
 
   JsonObject pri = doc.createNestedObject("priority");
-  pri["mode"] = (uint8_t)s_telemetry->getGridPriority();
-  pri["description"] = s_telemetry->getGridPriorityDescription();
+  pri["mode"] = s_telemetry ? (uint8_t)s_telemetry->getGridPriority() : 0;
+  pri["description"] = s_telemetry ? s_telemetry->getGridPriorityDescription() : "Unknown";
 
   JsonObject wifi = doc.createNestedObject("wifi");
-  wifi["connected"] = s_telemetry->isWiFiConnected();
+  wifi["connected"] = s_telemetry ? s_telemetry->isWiFiConnected() : false;
   wifi["ip"] = WiFi.localIP().toString();
   wifi["rssi"] = WiFi.RSSI();
 
-
   JsonObject chint = doc.createNestedObject("chint");
-  chint["ws_connected"] = s_telemetry->getChintSource().isConnected();
-  chint["ip"] = s_telemetry->getChintSource().getIp();
+  chint["ws_connected"] = chintSrc ? chintSrc->isConnected() : false;
+  chint["ip"] = cfg.chint_ip;
   chint["age_sec"] = (chintAge >= 0) ? round1(chintAge) : -1.0f;
 
   JsonObject shelly = doc.createNestedObject("shelly");
-  shelly["ws_connected"] = s_telemetry->getShellySource().isConnected();
-  shelly["ip"] = s_telemetry->getShellySource().getIp();
+  shelly["ws_connected"] = shellySrc ? shellySrc->isConnected() : false;
+  shelly["ip"] = cfg.shelly_ip;
   shelly["age_sec"] = (shellyAge >= 0) ? round1(shellyAge) : -1.0f;
 
   JsonObject opendtu = doc.createNestedObject("opendtu");
-  opendtu["mqtt_connected"] = s_telemetry->getOpenDtuSource().isConnected();
+  opendtu["mqtt_connected"] = opendtuSrc ? opendtuSrc->isConnected() : false;
   opendtu["age_sec"] = round1(pvAge);
 
   JsonObject modbus = doc.createNestedObject("modbus");
@@ -146,13 +151,7 @@ static void handleRoot() {
 static bool s_otaAuthorized = false;
 
 static String getStoredOtaPassword() {
-  Preferences prefs;
-  if (prefs.begin("ddsu666", true)) {
-    String value = prefs.getString("ota_pass", OTA_PASSWORD);
-    prefs.end();
-    return value;
-  }
-  return String(OTA_PASSWORD);
+  return AppConfig::getInstance().get().ota_password;
 }
 
 static bool isOtaAuthorized() {
@@ -193,21 +192,8 @@ void initWebServer(ModbusRTUServer &modbus, TelemetryManager &telemetry) {
   // POST -> saves new values to NVS (takes effect after reboot)
   s_server.on("/api/config", HTTP_GET, []() {
     if (!isOtaAuthorized()) return s_server.requestAuthentication();
-    Preferences prefs;
-    prefs.begin("ddsu666", true); // read-only
     StaticJsonDocument<512> doc;
-    doc["wifi_ssid"]     = prefs.getString("wifi_ssid",  WIFI_SSID);
-    String storedWifiPass = prefs.getString("wifi_pass",  WIFI_PASSWORD);
-    doc["wifi_pass_set"] = (storedWifiPass.length() > 0);
-    doc["chint_ip"]      = prefs.getString("chint_ip",    CHINT_XIAO_IP);
-    doc["shelly_ip"]     = prefs.getString("shelly_ip",   SHELLY_IP);
-    doc["mqtt_broker"]   = prefs.getString("mqtt_broker", MQTT_BROKER_IP);
-    doc["mqtt_port"]     = prefs.getUShort("mqtt_port",   MQTT_PORT);
-    doc["mqtt_user"]     = prefs.getString("mqtt_user",   MQTT_USER);
-    String storedPass = prefs.getString("mqtt_pass", MQTT_PASSWORD);
-    doc["mqtt_pass_set"] = (storedPass.length() > 0);
-    doc["ota_password"]  = prefs.getString("ota_pass",   OTA_PASSWORD);
-    prefs.end();
+    AppConfig::getInstance().serialize(doc);
     char buf[512];
     serializeJson(doc, buf, sizeof(buf));
     s_server.sendHeader("Access-Control-Allow-Origin", "*");
@@ -216,44 +202,42 @@ void initWebServer(ModbusRTUServer &modbus, TelemetryManager &telemetry) {
 
   s_server.on("/api/config", HTTP_POST, []() {
     if (!isOtaAuthorized()) return s_server.requestAuthentication();
-    Preferences prefs;
-    prefs.begin("ddsu666", false); // read-write
-    bool changed = false;
+    SystemSettings updated = AppConfig::getInstance().get();
 
     if (s_server.hasArg("wifi_ssid")) {
       String v = s_server.arg("wifi_ssid");
-      if (v.length() > 0) { prefs.putString("wifi_ssid", v); changed = true; }
+      if (v.length() > 0) updated.wifi_ssid = v;
     }
     if (s_server.hasArg("wifi_pass")) {
-      prefs.putString("wifi_pass", s_server.arg("wifi_pass"));
-      changed = true;
+      updated.wifi_pass = s_server.arg("wifi_pass");
     }
     if (s_server.hasArg("chint_ip")) {
       String v = s_server.arg("chint_ip");
-      if (v.length() >= 7) { prefs.putString("chint_ip", v); changed = true; }
+      if (v.length() >= 7) updated.chint_ip = v;
     }
     if (s_server.hasArg("shelly_ip")) {
       String v = s_server.arg("shelly_ip");
-      if (v.length() >= 7) { prefs.putString("shelly_ip", v); changed = true; }
+      if (v.length() >= 7) updated.shelly_ip = v;
     }
     if (s_server.hasArg("mqtt_broker")) {
       String v = s_server.arg("mqtt_broker");
-      if (v.length() >= 7) { prefs.putString("mqtt_broker", v); changed = true; }
+      if (v.length() >= 7) updated.mqtt_broker = v;
     }
     if (s_server.hasArg("mqtt_port")) {
       uint16_t p = (uint16_t)s_server.arg("mqtt_port").toInt();
-      if (p > 0) { prefs.putUShort("mqtt_port", p); changed = true; }
+      if (p > 0) updated.mqtt_port = p;
     }
     if (s_server.hasArg("mqtt_user")) {
-      prefs.putString("mqtt_user", s_server.arg("mqtt_user")); changed = true;
+      updated.mqtt_user = s_server.arg("mqtt_user");
     }
     if (s_server.hasArg("mqtt_pass")) {
-      prefs.putString("mqtt_pass", s_server.arg("mqtt_pass")); changed = true;
+      updated.mqtt_pass = s_server.arg("mqtt_pass");
     }
     if (s_server.hasArg("ota_password")) {
-      prefs.putString("ota_pass", s_server.arg("ota_password")); changed = true;
+      updated.ota_password = s_server.arg("ota_password");
     }
-    prefs.end();
+
+    bool changed = AppConfig::getInstance().save(updated);
 
     s_server.sendHeader("Access-Control-Allow-Origin", "*");
     s_server.send(200, "application/json",

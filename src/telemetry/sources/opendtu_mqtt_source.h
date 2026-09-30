@@ -24,6 +24,8 @@ public:
 
   void setBroker(const String &broker, uint16_t port, const String &user, const String &pass);
 
+  bool isPvSource() const override { return true; }
+
 private:
   String _broker;
   uint16_t _port;

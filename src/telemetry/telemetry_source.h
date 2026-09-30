@@ -56,6 +56,16 @@ public:
     uint32_t last = getLastMessageTime();
     return (last != 0) && (millis() - last <= timeoutMs);
   }
+
+  /**
+   * @brief Whether this source produces grid measurements.
+   */
+  virtual bool isGridSource() const { return false; }
+
+  /**
+   * @brief Whether this source produces PV solar generation measurements.
+   */
+  virtual bool isPvSource() const { return false; }
 };
 
 /**

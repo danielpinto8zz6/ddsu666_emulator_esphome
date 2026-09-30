@@ -38,3 +38,27 @@ private:
   static MeterTelemetry grid;
   static MeterTelemetry pv;
 };
+
+/**
+ * @brief Abstraction for meter telemetry access (Dependency Inversion Principle).
+ * Decouples Modbus protocol handling and Web/API layers from the underlying storage mechanism.
+ */
+class IMeterDataProvider {
+public:
+  virtual ~IMeterDataProvider() = default;
+  virtual MeterTelemetry getGridTelemetry() = 0;
+  virtual MeterTelemetry getPvTelemetry() = 0;
+};
+
+/**
+ * @brief Default adapter connecting IMeterDataProvider to thread-safe MeterState.
+ */
+class MeterStateDataProvider : public IMeterDataProvider {
+public:
+  MeterTelemetry getGridTelemetry() override {
+    return MeterState::getGrid();
+  }
+  MeterTelemetry getPvTelemetry() override {
+    return MeterState::getPv();
+  }
+};

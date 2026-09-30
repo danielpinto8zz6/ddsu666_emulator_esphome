@@ -47,8 +47,9 @@ static uint16_t getFloatRegisterWord(float val, bool highWord) {
   return highWord ? (uint16_t)((raw >> 16) & 0xFFFF) : (uint16_t)(raw & 0xFFFF);
 }
 
-ModbusRTUServer::ModbusRTUServer()
-  : _uartQueue(nullptr),
+ModbusRTUServer::ModbusRTUServer(IMeterDataProvider *dataProvider)
+  : _dataProvider(dataProvider ? dataProvider : &_defaultDataProvider),
+    _uartQueue(nullptr),
     _enabled(true),
     _rxLen(0),
     _queryCount(0),
@@ -61,6 +62,10 @@ ModbusRTUServer::ModbusRTUServer()
     _lastRateCalcTime(0),
     _queriesAtLastCalc(0),
     _queryRateHz(0.0f) {}
+
+void ModbusRTUServer::setDataProvider(IMeterDataProvider *dataProvider) {
+  _dataProvider = dataProvider ? dataProvider : &_defaultDataProvider;
+}
 
 void ModbusRTUServer::begin() {
   pinMode(PIN_RS485_DE_RE, OUTPUT);
@@ -239,8 +244,8 @@ void ModbusRTUServer::processFrame(const uint8_t *frame, size_t length) {
 
   // Snapshot meter telemetry once for the entire frame to minimize spinlock contention
   const MeterTelemetry telemetry = (slaveId == MODBUS_SLAVE_GRID)
-                                 ? MeterState::getGrid()
-                                 : MeterState::getPv();
+                                 ? _dataProvider->getGridTelemetry()
+                                 : _dataProvider->getPvTelemetry();
 
   uint8_t byteCount = (uint8_t)(registerCount * 2);
   uint8_t response[256];

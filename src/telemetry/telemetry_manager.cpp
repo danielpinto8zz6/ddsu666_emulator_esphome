@@ -2,42 +2,44 @@
 #include <cmath>
 #include <cstring>
 
-TelemetryManager::TelemetryManager(ModbusRTUServer &modbusServer)
-  : _modbusServer(modbusServer) {
+TelemetryManager::TelemetryManager(ModbusRTUServer &modbusServer,
+                                   IPowerFilter *filter,
+                                   IGridArbitrator *arbitrator)
+  : _modbusServer(modbusServer),
+    _filter(filter ? filter : &_defaultFilter),
+    _arbitrator(arbitrator ? arbitrator : &_defaultArbitrator) {
   strncpy(_lastKnownSource, "NONE", sizeof(_lastKnownSource));
 }
 
-void TelemetryManager::begin() {
-  Preferences prefs;
-  String chintIp = CHINT_XIAO_IP;
-  String shellyIp = SHELLY_IP;
-  String mqttBroker = MQTT_BROKER_IP;
-  uint16_t mqttPort = MQTT_PORT;
-  String mqttUser = MQTT_USER;
-  String mqttPass = MQTT_PASSWORD;
+void TelemetryManager::setFilter(IPowerFilter *filter) {
+  _filter = filter ? filter : &_defaultFilter;
+}
 
-  if (prefs.begin("ddsu666", false)) {
-    _gridPriority = (GridPriorityMode)prefs.getUChar("grid_pri", (uint8_t)DEFAULT_GRID_PRIORITY_MODE);
-    chintIp       = prefs.getString("chint_ip",    CHINT_XIAO_IP);
-    shellyIp      = prefs.getString("shelly_ip",   SHELLY_IP);
-    mqttBroker    = prefs.getString("mqtt_broker", MQTT_BROKER_IP);
-    mqttPort      = prefs.getUShort("mqtt_port",   MQTT_PORT);
-    mqttUser      = prefs.getString("mqtt_user",   MQTT_USER);
-    mqttPass      = prefs.getString("mqtt_pass",   MQTT_PASSWORD);
-    _wifiSsid     = prefs.getString("wifi_ssid",   WIFI_SSID);
-    _wifiPassword = prefs.getString("wifi_pass",   WIFI_PASSWORD);
-    prefs.end();
-  } else {
-    _wifiSsid     = WIFI_SSID;
-    _wifiPassword = WIFI_PASSWORD;
+void TelemetryManager::setArbitrator(IGridArbitrator *arbitrator) {
+  _arbitrator = arbitrator ? arbitrator : &_defaultArbitrator;
+}
+
+void TelemetryManager::registerSource(ITelemetrySource *source) {
+  if (source) {
+    _sources.push_back(source);
+    Serial.printf("[Telemetry] Registered source: %s (%s)\n", source->getId(), source->getName());
   }
+}
 
-  Serial.printf("[Telemetry] Initializing sources: Chint=%s, Shelly=%s, MQTT=%s:%u\n",
-                chintIp.c_str(), shellyIp.c_str(), mqttBroker.c_str(), mqttPort);
+ITelemetrySource* TelemetryManager::getSource(const char *id) const {
+  for (auto *src : _sources) {
+    if (src && strcmp(src->getId(), id) == 0) {
+      return src;
+    }
+  }
+  return nullptr;
+}
 
-  _chintSource.setIp(chintIp);
-  _shellySource.setIp(shellyIp);
-  _opendtuSource.setBroker(mqttBroker, mqttPort, mqttUser, mqttPass);
+void TelemetryManager::begin() {
+  AppConfig &cfg = AppConfig::getInstance();
+  cfg.begin();
+
+  _arbitrator->setMode((GridPriorityMode)cfg.getGridPriority());
 
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
@@ -46,11 +48,10 @@ void TelemetryManager::begin() {
 
   connectWiFi();
 
-  // Register this hub as sink to all sources
-  _chintSource.begin(this);
-  _shellySource.begin(this);
-  _opendtuSource.begin(this);
-  _espnowSource.begin(this);
+  // Initialize all registered sources with this hub as the destination sink
+  for (auto *src : _sources) {
+    src->begin(this);
+  }
 
   _lastGridMsgTime = millis();
   _lastPvMsgTime = millis();
@@ -58,8 +59,9 @@ void TelemetryManager::begin() {
 
 void TelemetryManager::connectWiFi() {
   if (WiFi.status() == WL_CONNECTED) return;
-  Serial.printf("[WiFi] Connecting to %s", _wifiSsid.c_str());
-  WiFi.begin(_wifiSsid.c_str(), _wifiPassword.c_str());
+  const SystemSettings &s = AppConfig::getInstance().get();
+  Serial.printf("[WiFi] Connecting to %s", s.wifi_ssid.c_str());
+  WiFi.begin(s.wifi_ssid.c_str(), s.wifi_pass.c_str());
   unsigned long start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) {
     delay(200);
@@ -82,90 +84,35 @@ void TelemetryManager::loop() {
     }
   }
 
-  // Update sources
-  _chintSource.loop();
-  _shellySource.loop();
-  _opendtuSource.loop();
-  _espnowSource.loop();
-
-  // Energy polling coordination for Shelly
-  bool chintFresh = _chintSource.isRecent(CHINT_TIMEOUT_MS);
-  _shellySource.setEnergyPollingEnabled(!chintFresh);
+  // Generic loop over all registered telemetry sources (OCP)
+  for (auto *src : _sources) {
+    src->loop();
+  }
 
   checkWatchdogs();
   checkSourceTransition();
 }
 
 void TelemetryManager::setGridPriority(GridPriorityMode mode) {
-  _gridPriority = mode;
-  Preferences prefs;
-  if (prefs.begin("ddsu666", false)) {
-    prefs.putUChar("grid_pri", (uint8_t)mode);
-    prefs.end();
-  }
+  _arbitrator->setMode(mode);
+  AppConfig::getInstance().setGridPriority((uint8_t)mode);
   Serial.printf("[Priority] Grid Priority Mode set to %u: %s\n", (unsigned)mode, getGridPriorityDescription());
 }
 
+GridPriorityMode TelemetryManager::getGridPriority() const {
+  return _arbitrator->getMode();
+}
+
 const char* TelemetryManager::getGridPriorityDescription() const {
-  switch (_gridPriority) {
-    case GRID_PRI_CHINT_SHELLY: return "Auto: Chint WS -> Shelly WS";
-    case GRID_PRI_SHELLY_CHINT: return "Auto: Shelly WS -> Chint WS";
-    case GRID_PRI_CHINT_ONLY:   return "Chint WS Only";
-    case GRID_PRI_SHELLY_ONLY:  return "Shelly WS Only";
-    default:                    return "Unknown";
-  }
+  return _arbitrator->getDescription();
 }
 
 const char* TelemetryManager::getActiveGridSource() const {
-  bool chintFresh = _chintSource.isRecent(CHINT_TIMEOUT_MS);
-  bool shellyFresh = _shellySource.isRecent(5000);
-
-  switch (_gridPriority) {
-    case GRID_PRI_CHINT_SHELLY:
-      if (chintFresh) return "CHINT_WS";
-      if (shellyFresh) return "SHELLY_WS";
-      break;
-
-    case GRID_PRI_SHELLY_CHINT:
-      if (shellyFresh) return "SHELLY_WS";
-      if (chintFresh) return "CHINT_WS";
-      break;
-
-    case GRID_PRI_CHINT_ONLY:
-      if (chintFresh) return "CHINT_WS";
-      break;
-
-    case GRID_PRI_SHELLY_ONLY:
-      if (shellyFresh) return "SHELLY_WS";
-      break;
-  }
-  return "NONE";
+  return _arbitrator->getActiveSource(_sources);
 }
 
 bool TelemetryManager::canSourceUpdateGrid(const char *sourceId) const {
-  bool isChint = (strcmp(sourceId, "CHINT_WS") == 0);
-  bool isShelly = (strcmp(sourceId, "SHELLY_WS") == 0);
-
-  switch (_gridPriority) {
-    case GRID_PRI_CHINT_SHELLY:
-      if (isChint) return true;
-      if (isShelly) return !_chintSource.isRecent(CHINT_TIMEOUT_MS);
-      return false;
-
-    case GRID_PRI_SHELLY_CHINT:
-      if (isShelly) return true;
-      if (isChint) return !_shellySource.isRecent(5000);
-      return false;
-
-    case GRID_PRI_CHINT_ONLY:
-      return isChint;
-
-    case GRID_PRI_SHELLY_ONLY:
-      return isShelly;
-
-    default:
-      return false;
-  }
+  return _arbitrator->canUpdate(sourceId, _sources);
 }
 
 void TelemetryManager::reportGridMeasurement(const char *sourceId, const GridMeasurement &meas) {
@@ -176,7 +123,8 @@ void TelemetryManager::reportGridMeasurement(const char *sourceId, const GridMea
     float exp = meas.export_kwh;
 
     // Guard: divergence check after Chint reconnect
-    if (isChint && !_chintSource.isRecent(CHINT_TIMEOUT_MS + 500)) {
+    ITelemetrySource *chint = getSource("CHINT_WS");
+    if (isChint && chint && !chint->isRecent(CHINT_TIMEOUT_MS + 500)) {
       MeterTelemetry cur = MeterState::getGrid();
       float impDelta = (imp >= 0.0f) ? std::fabs(imp - cur.import_kwh) : 0.0f;
       float expDelta = (exp >= 0.0f) ? std::fabs(exp - cur.export_kwh) : 0.0f;
@@ -213,7 +161,7 @@ void TelemetryManager::reportGridMeasurement(const char *sourceId, const GridMea
   }
 
   // 3. Apply Multi-Zone Signal Conditioning Filter
-  float filtered_w = _gridFilter.apply(meas.active_power_w);
+  float filtered_w = _filter->apply(meas.active_power_w);
 
   // 4. Invert sign for Hoymiles zero-export: import is negative kW, export is positive kW
   float p_kw = (filtered_w / 1000.0f) * -1.0f;
@@ -291,6 +239,6 @@ void TelemetryManager::checkSourceTransition() {
     _lastKnownSource[sizeof(_lastKnownSource) - 1] = '\0';
 
     // Reset filter on source handoff so new source starts fresh immediately
-    _gridFilter.reset();
+    _filter->reset();
   }
 }

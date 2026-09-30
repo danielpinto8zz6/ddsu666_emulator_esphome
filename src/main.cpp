@@ -5,13 +5,29 @@
 #include "secrets.h"
 #include "meter_data.h"
 #include "modbus_rtu.h"
+#include "config/app_config.h"
 #include "telemetry/telemetry_manager.h"
+#include "telemetry/sources/chint_ws_source.h"
+#include "telemetry/sources/shelly_ws_source.h"
+#include "telemetry/sources/opendtu_mqtt_source.h"
+#include "telemetry/sources/espnow_pv_source.h"
 #include "web_server.h"
 
 #define WDT_TIMEOUT_SECONDS 15
 
-static ModbusRTUServer  s_modbusServer;
-static TelemetryManager s_telemetryManager(s_modbusServer);
+// Core Domain & Communication Abstractions
+static MeterStateDataProvider s_meterDataProvider;
+static ModbusRTUServer        s_modbusServer(&s_meterDataProvider);
+static GridFilter             s_gridFilter;
+static DefaultGridArbitrator  s_gridArbitrator;
+static TelemetryManager       s_telemetryManager(s_modbusServer, &s_gridFilter, &s_gridArbitrator);
+
+// Pluggable Technology Drivers (Instantiated in Composition Root)
+static ChintWsSource          s_chintSource;
+static ShellyWsSource         s_shellySource;
+static OpenDtuMqttSource      s_opendtuSource;
+static EspNowPvSource         s_espnowSource;
+
 static bool s_webInitialized = false;
 volatile UBaseType_t g_networkTaskStackHWM = 0;  // sampled every loop iteration (#4)
 
@@ -36,6 +52,22 @@ void modbusTask(void *param) {
 void networkTask(void *param) {
   Serial.printf("[Network Task] Running on Core %d\n", xPortGetCoreID());
   esp_task_wdt_add(NULL);
+
+  // Load configuration from NVS
+  AppConfig &cfg = AppConfig::getInstance();
+  cfg.begin();
+  const SystemSettings &s = cfg.get();
+
+  // Configure sources with persisted settings
+  s_chintSource.setIp(s.chint_ip);
+  s_shellySource.setIp(s.shelly_ip);
+  s_opendtuSource.setBroker(s.mqtt_broker, s.mqtt_port, s.mqtt_user, s.mqtt_pass);
+
+  // Register sources with TelemetryManager (Dependency Injection / OCP)
+  s_telemetryManager.registerSource(&s_chintSource);
+  s_telemetryManager.registerSource(&s_shellySource);
+  s_telemetryManager.registerSource(&s_opendtuSource);
+  s_telemetryManager.registerSource(&s_espnowSource);
 
   s_telemetryManager.begin();
 

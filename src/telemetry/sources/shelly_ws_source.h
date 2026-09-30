@@ -24,6 +24,8 @@ public:
   const String& getIp() const { return _ip; }
   void setIp(const String &ip);
 
+  bool isGridSource() const override { return true; }
+
   /**
    * @brief Enable periodic polling for energy counters (used during fallback when Chint is offline).
    */

@@ -7,8 +7,9 @@
 
 class ModbusRTUServer {
 public:
-  ModbusRTUServer();
+  explicit ModbusRTUServer(IMeterDataProvider *dataProvider = nullptr);
 
+  void setDataProvider(IMeterDataProvider *dataProvider);
   void begin();
   void setEnabled(bool enabled);
   bool isEnabled() const { return _enabled; }
@@ -30,6 +31,9 @@ public:
   static uint16_t calculateCRC(const uint8_t *buffer, size_t length);
 
 private:
+  IMeterDataProvider *_dataProvider;
+  MeterStateDataProvider _defaultDataProvider;
+
   QueueHandle_t _uartQueue;
   bool _enabled;
   uint8_t _rxBuffer[256];
