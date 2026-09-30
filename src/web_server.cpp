@@ -14,7 +14,10 @@ public:
   bool isUploadActive() const { return _currentUpload != nullptr; }
 };
 
+#include "dashboard_ws.h"
+
 static SafeWebServer s_server(80);
+static DashboardWsServer s_dashboardWs(81);
 
 static ModbusRTUServer  *s_modbus    = nullptr;
 static TelemetryManager *s_telemetry = nullptr;
@@ -25,7 +28,7 @@ extern volatile UBaseType_t g_networkTaskStackHWM;  // set in main.cpp
 static inline float round1(float v) { return std::round(v * 10.0f) / 10.0f; }
 static inline float round2(float v) { return std::round(v * 100.0f) / 100.0f; }
 
-static void handleHealthJson() {
+static void buildHealthDoc(JsonDocument &doc) {
   MeterTelemetry grid = MeterState::getGrid();
   MeterTelemetry pv   = MeterState::getPv();
 
@@ -50,7 +53,6 @@ static void handleHealthJson() {
   float modbusRate = s_modbus ? s_modbus->getQueryRateHz() : 0.0f;
   bool inverterConnected = s_modbus ? s_modbus->isInverterActive(2500) : false;
 
-  StaticJsonDocument<1536> doc;
   doc["status"] = healthy ? "HEALTHY" : ((s_modbus && s_modbus->isEnabled()) ? "DEGRADED" : "FAILSAFE");
   doc["uptime_sec"] = (uint32_t)(millis() / 1000);
   doc["free_heap"] = (uint32_t)ESP.getFreeHeap();
@@ -112,7 +114,6 @@ static void handleHealthJson() {
   uint8_t total = s_telemetry ? s_telemetry->getSourceEventCount() : 0;
   uint8_t head  = s_telemetry ? s_telemetry->getSourceEventHead() : 0;
   const SourceEvent *evs = s_telemetry ? s_telemetry->getSourceEvents() : nullptr;
-  // Iterate oldest -> newest
   if (evs) {
     for (uint8_t i = 0; i < total; i++) {
       uint8_t idx = (head - total + i + SOURCE_EVENT_HISTORY) % SOURCE_EVENT_HISTORY;
@@ -125,7 +126,11 @@ static void handleHealthJson() {
 
   // Diagnostic: network task stack HWM (#4)
   doc["net_stack_hwm"] = (uint32_t)g_networkTaskStackHWM;
+}
 
+static void handleHealthJson() {
+  StaticJsonDocument<2048> doc;
+  buildHealthDoc(doc);
   serializeJson(doc, s_jsonBuffer, sizeof(s_jsonBuffer));
   s_server.sendHeader("Access-Control-Allow-Origin", "*");
   s_server.send(200, "application/json", s_jsonBuffer);
@@ -333,6 +338,7 @@ void initWebServer(ModbusRTUServer &modbus, TelemetryManager &telemetry) {
   });
 
   s_server.begin();
+  s_dashboardWs.begin(telemetry);
 
   Serial.println("[Web Server] Health Check UI ready at http://10.0.0.110/");
   Serial.println("[Web Server] JSON Health API at http://10.0.0.110/health");
@@ -340,4 +346,17 @@ void initWebServer(ModbusRTUServer &modbus, TelemetryManager &telemetry) {
 
 void handleWebServer() {
   s_server.handleClient();
+  s_dashboardWs.loop();
+
+  // If WebSocket clients are active, stream telemetry at 5 Hz (200 ms)
+  static uint32_t s_lastWsBroadcast = 0;
+  uint32_t now = millis();
+  if (s_dashboardWs.hasClients() && (now - s_lastWsBroadcast >= 200)) {
+    s_lastWsBroadcast = now;
+    StaticJsonDocument<2048> doc;
+    buildHealthDoc(doc);
+    serializeJson(doc, s_jsonBuffer, sizeof(s_jsonBuffer));
+    s_dashboardWs.broadcast(s_jsonBuffer);
+  }
 }
+
