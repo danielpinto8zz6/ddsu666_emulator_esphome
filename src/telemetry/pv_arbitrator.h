@@ -23,7 +23,7 @@ public:
 };
 
 /**
- * @brief Default dual-source PV arbitrator (OpenDTU MQTT vs Sonoff POWCT ESP-NOW).
+ * @brief Default PV arbitrator (OpenDTU Solar PV via MQTT or Disabled).
  */
 class DefaultPvArbitrator : public IPvArbitrator {
 public:

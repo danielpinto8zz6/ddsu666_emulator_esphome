@@ -43,9 +43,9 @@ Hoymiles HYS/HYB hybrid inverters poll two CHINT DDSU666 meters over RS-485 Modb
 ├─────────────────────────────────┤                      │  (ddsu666.local / .169)                       │   (COM Port Pins 1 & 2)  (HYS / HYB Series)
 │  OpenDTU-onBattery / Solar      │──[MQTT Telemetry]───>│  • Slave ID 2: Grid Meter                     │   (~14.8 Hz Polling, 0 CRC Errors)
 │  (10.0.0.1:1883)                │                      │  • Slave ID 1: PV Solar Meter                 │
-├─────────────────────────────────┤                      │  • WebSocket Live Stream (:81)                │
-│  Sonoff POWCT (ESP-NOW)         │──[ESP-NOW 2.4GHz]───>│  • HA MQTT Auto-Discovery (14 Sensors)       │
-└─────────────────────────────────┘                      └───────────────────────────────────────────────┘
+└─────────────────────────────────┘                      │  • WebSocket Live Stream (:81)                │
+                                                         │  • HA MQTT Auto-Discovery (14 Sensors)       │
+                                                         └───────────────────────────────────────────────┘
                                                                  │
                                                                  ▼
                                                         ┌───────────────────────────────────────────────┐
@@ -55,7 +55,7 @@ Hoymiles HYS/HYB hybrid inverters poll two CHINT DDSU666 meters over RS-485 Modb
 ```
 
 - **Slave ID 2 (Grid Meter)**: Emulates the main grid connection meter. Provides active power, voltage, current, power factor, frequency, and cumulative import/export kWh for the inverter's **Zero-Export (Autoconsumo)** PID control loop.
-- **Slave ID 1 (PV Meter)**: Emulates a PV string meter using generation data polled from **OpenDTU-onBattery** or **ESP-NOW**. Allows the inverter to display solar generation and battery charging on the Hoymiles S-Miles app without a separate physical CT.
+- **Slave ID 1 (PV Meter)**: Emulates a PV string meter using generation data polled from **OpenDTU-onBattery** via MQTT. Allows the inverter to display solar generation and battery charging on the Hoymiles S-Miles app without a separate physical CT.
 - **mDNS Discovery**: Zero-configuration `.local` domain access (`http://ddsu666.local` and `http://chint-reader.local`).
 - **Home Assistant Auto-Discovery**: 14 sensors announced automatically to MQTT with device registry integration, LWT availability, and a 2-second telemetry cadence.
 
@@ -175,8 +175,7 @@ ddsu666_emulator_esphome/
 │       └── sources/                # Pluggable Technology Drivers
 │           ├── chint_ws_source.cpp/.h      # Chint DDSU666 Master WebSocket client
 │           ├── shelly_ws_source.cpp/.h     # Shelly Pro EM RPC WebSocket client
-│           ├── opendtu_mqtt_source.cpp/.h  # OpenDTU Solar PV MQTT client
-│           └── espnow_pv_source.cpp/.h     # Sonoff POWCT ESP-NOW binary receiver
+│           └── opendtu_mqtt_source.cpp/.h  # OpenDTU Solar PV MQTT client
 ├── web_ui_source.html              # Uncompressed HTML/CSS/JS source for WebUI
 │
 └── chint_ddsu666_reader/           # Clean Core Split RS-485 Master Reader (14.5 Hz)
@@ -300,7 +299,7 @@ The **Native C++** implementation is an ultra-high-performance alternative engin
 ### Key Advantages
 * **Dual-Core FreeRTOS Isolation**:
   * **Core 1**: Dedicated 100% exclusively to RS-485 Modbus RTU polling. Sub-millisecond response latency with zero jitter.
-  * **Core 0**: Handles Wi-Fi, direct Shelly WebSockets, direct Hoymiles DTU TCP client, MQTT, ESP-NOW, WebUI, and OTA updates.
+  * **Core 0**: Handles Wi-Fi, direct Shelly WebSockets, direct Hoymiles DTU TCP client, MQTT, WebUI, and OTA updates.
 * **Direct Shelly WebSocket Client (200ms)**: Connects directly to `ws://<SHELLY_IP>/rpc` without requiring an MQTT broker or Shelly script.
 * **Direct Hoymiles DTU-Lite-S / DTU-WLite Polling**: Direct TCP polling on port `10081` with hardware-accelerated AES-128-GCM decryption and automatic clock sync—no OpenDTU or external gateway required.
 * **Rolling Modbus Health & Query Rate Monitor**: WebUI displays live query frequency (~14.5 Hz) and inverter link status.
@@ -452,7 +451,7 @@ The emulator connects to your local MQTT broker (configured in `AppConfig` or We
 | `modbus_query_rate` | Inverter Query Rate | Hz | — | `measurement` | Real-time Modbus query frequency (~14.8 Hz) |
 | `modbus_crc_errors` | Modbus CRC Errors | — | — | `total_increasing` | RS-485 transmission integrity counter |
 | `active_grid_source`| Active Grid Source | — | — | — | Current active provider (`CHINT_WS`, `SHELLY_WS`) |
-| `active_pv_source` | Active PV Source | — | — | — | Current solar provider (`OPENDTU_MQTT`, `ESPNOW`) |
+| `active_pv_source` | Active PV Source | — | — | — | Current solar provider (`OPENDTU_MQTT`, `NONE`) |
 | `filter_mode` | Power Filter Mode | — | — | — | Active smoothing algorithm (`damped`, `raw`) |
 
 ---
@@ -473,7 +472,7 @@ For installations where the physical Chint DDSU666 meter is in a main distributi
 | Feature | ESPHome (Legacy) | Native C++ / FreeRTOS (Current Production) |
 | :--- | :--- | :--- |
 | **Status** | Legacy reference | **Primary production architecture** |
-| **Grid Data Sources** | MQTT (`shelly-em/realtime`) | **Chint WebSocket (:81) + Shelly WS (:80) + ESP-NOW** |
+| **Grid Data Sources** | MQTT (`shelly-em/realtime`) | **Chint WebSocket (:81) + Shelly WS (:80)** |
 | **Priority Arbitration** | Manual config | **Automatic dynamic failover (Chint -> Shelly in 4s)** |
 | **Update Cadence** | ~500 ms (cooperative) | **Instant hardware turnaround (5 Hz stream, 14.8 Hz Modbus)** |
 | **Modbus Core Allocation**| Shared event loop | **Dedicated Core 1 FreeRTOS Task (0 jitter)** |

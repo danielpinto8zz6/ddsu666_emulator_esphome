@@ -10,7 +10,6 @@
 #include "telemetry/sources/chint_ws_source.h"
 #include "telemetry/sources/shelly_ws_source.h"
 #include "telemetry/sources/opendtu_mqtt_source.h"
-#include "telemetry/sources/espnow_pv_source.h"
 #include "telemetry/grid_arbitrator.h"
 #include "telemetry/pv_arbitrator.h"
 #include "web_server.h"
@@ -32,7 +31,6 @@ static TelemetryManager       s_telemetryManager(s_modbusServer, &s_gridFilter, 
 static ChintWsSource          s_chintSource;
 static ShellyWsSource         s_shellySource;
 static OpenDtuMqttSource      s_opendtuSource;
-static EspNowPvSource         s_espnowSource;
 
 // Home Assistant Discovery & Telemetry Publisher (SOLID: SRP & DIP)
 static HaDiscovery            s_haDiscovery;
@@ -81,7 +79,6 @@ void networkTask(void *param) {
   s_telemetryManager.registerSource(&s_chintSource);
   s_telemetryManager.registerSource(&s_shellySource);
   s_telemetryManager.registerSource(&s_opendtuSource);
-  s_telemetryManager.registerSource(&s_espnowSource);
 
   s_telemetryManager.begin();
 

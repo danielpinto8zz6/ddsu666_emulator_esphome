@@ -123,10 +123,8 @@
     <div class="status-row" style="align-items: center;">
       <span>☀️ PV Source Priority</span>
       <select id="pv-priority-select" onchange="setPvPriority(this.value)" style="background: rgba(255,255,255,0.06); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 4px 8px; font-size: 0.8rem; cursor: pointer; outline: none;">
-        <option value="0">Auto: OpenDTU MQTT → POWCT ESP-NOW (Default)</option>
-        <option value="1">Auto: POWCT ESP-NOW → OpenDTU MQTT</option>
-        <option value="2">OpenDTU MQTT Only</option>
-        <option value="3">POWCT ESP-NOW Only</option>
+        <option value="0">OpenDTU Solar PV via MQTT (Default)</option>
+        <option value="1">Disabled / Standby</option>
       </select>
     </div>
     <div class="status-row" style="align-items: center;">
@@ -141,7 +139,6 @@
     <div class="status-row"><span>Chint Master (XIAO ESP32-S3)</span><span id="chint-ws-badge" class="badge">--</span></div>
     <div class="status-row"><span>Shelly Pro EM (Fallback WS)</span><span id="shelly-ws-badge" class="badge">--</span></div>
     <div class="status-row"><span>PV Solar (OpenDTU MQTT)</span><span id="opendtu-badge" class="badge">--</span></div>
-    <div class="status-row"><span>PV Solar (POWCT ESP-NOW)</span><span id="espnow-badge" class="badge">--</span></div>
     <div class="status-row"><span>Hoymiles Inverter Link</span><span id="inverter-link-badge" class="badge">--</span></div>
     <div class="status-row"><span>Modbus Queries Answered</span><strong id="modbus-queries">--</strong></div>
     <div class="status-row"><span>Modbus Query Breakdown</span><span id="modbus-breakdown" style="font-size: 0.85rem; color: var(--text-dim);">--</span></div>
@@ -432,9 +429,6 @@
           if (d.pv.source === "OPENDTU_MQTT") {
             pvSrcBadge.innerText = "📡 OpenDTU MQTT";
             pvSrcBadge.className = "badge badge-ok";
-          } else if (d.pv.source === "ESPNOW_PV") {
-            pvSrcBadge.innerText = "⚡ POWCT ESP-NOW";
-            pvSrcBadge.className = "badge badge-accent";
           } else {
             pvSrcBadge.innerText = "NONE";
             pvSrcBadge.className = "badge badge-err";
@@ -480,21 +474,6 @@
         } else {
           odtuBadge.innerText = "DISCONNECTED";
           odtuBadge.className = "badge badge-err";
-        }
-      }
-
-      const espnowBadge = document.getElementById("espnow-badge");
-      if (espnowBadge && d.espnow) {
-        if (d.espnow.connected && d.espnow.age_sec >= 0 && d.espnow.age_sec < 10) {
-          espnowBadge.innerText = "ACTIVE (" + (d.espnow.packets_rx || 0) + " pkts • " + d.espnow.age_sec.toFixed(1) + "s ago)";
-          espnowBadge.className = "badge badge-ok";
-        } else if (d.espnow.packets_rx > 0) {
-          const ageStr = (d.espnow.age_sec >= 0) ? (d.espnow.age_sec.toFixed(0) + "s ago") : "--";
-          espnowBadge.innerText = "STANDBY (" + d.espnow.packets_rx + " pkts • " + ageStr + ")";
-          espnowBadge.className = "badge badge-warn";
-        } else {
-          espnowBadge.innerText = "STANDBY (NO PACKETS)";
-          espnowBadge.className = "badge badge-warn";
         }
       }
 

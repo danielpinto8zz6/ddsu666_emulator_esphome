@@ -6,7 +6,7 @@
 class ITelemetrySink;
 
 /**
- * @brief Common interface for all telemetry source providers (Chint WS, Shelly WS, MQTT, ESP-NOW, etc.)
+ * @brief Common interface for all telemetry source providers (Chint WS, Shelly WS, OpenDTU MQTT, etc.)
  */
 class ITelemetrySource {
 public:
