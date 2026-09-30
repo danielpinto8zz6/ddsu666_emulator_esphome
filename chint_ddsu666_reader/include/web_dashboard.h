@@ -52,6 +52,12 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     .diag-val { font-weight: 600; }
     .btn { background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--text); padding: 7px 14px; border-radius: 8px; cursor: pointer; font-size: 0.82rem; font-weight: 600; transition: all 0.2s; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
     .btn:hover { background: rgba(255,255,255,0.12); }
+    .btn-live-on { background: rgba(16, 185, 129, 0.15); color: var(--green); border: 1px solid rgba(16, 185, 129, 0.4); display: inline-flex; align-items: center; gap: 6px; }
+    .btn-live-on:hover { background: rgba(16, 185, 129, 0.25); }
+    .btn-live-off { background: rgba(148, 163, 184, 0.12); color: var(--muted); border: 1px solid rgba(148, 163, 184, 0.3); display: inline-flex; align-items: center; gap: 6px; }
+    .btn-live-off:hover { background: rgba(148, 163, 184, 0.2); color: var(--text); }
+    .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px var(--green); display: inline-block; }
+    .live-dot.paused { background: var(--muted); box-shadow: none; }
     .btn-primary { background: #0284c7; color: #fff; border-color: #0369a1; }
     .btn-primary:hover { background: #0369a1; }
     .btn-danger { background: rgba(244,63,94,0.15); color: var(--red); border-color: rgba(244,63,94,0.3); }
@@ -74,6 +80,9 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         <p>Seeed Studio XIAO ESP32-S3 &bull; Ultra-Fast Polling &bull; WebSocket Stream</p>
       </div>
       <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+        <button id="live-toggle-btn" class="btn btn-live-on" onclick="toggleLiveMode()" title="Toggle live reading updates">
+          <span id="live-dot" class="live-dot"></span> <span id="live-text">Live: ON</span>
+        </button>
         <span id="badge-stream" class="badge badge-stream">⚡ LIVE WS (15Hz)</span>
         <span id="badge-meter" class="badge badge-offline">Meter Offline</span>
         <button class="btn" onclick="openModal()">⚙️ Slave ID</button>
@@ -170,14 +179,61 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
   <script>
     let ws = null;
     let wsTimer = null;
+    let pollInterval = null;
+    let isLiveMode = localStorage.getItem('chint_live_mode') !== 'false';
     const wsUrl = 'ws://' + window.location.hostname + ':81/';
     document.getElementById('val-ws-url').innerText = wsUrl;
 
+    function updateLiveToggleUI() {
+      const btn = document.getElementById('live-toggle-btn');
+      const dot = document.getElementById('live-dot');
+      const txt = document.getElementById('live-text');
+      if (!btn || !dot || !txt) return;
+
+      if (isLiveMode) {
+        btn.className = 'btn btn-live-on';
+        dot.className = 'live-dot';
+        txt.innerText = 'Live: ON';
+      } else {
+        btn.className = 'btn btn-live-off';
+        dot.className = 'live-dot paused';
+        txt.innerText = 'Live: PAUSED';
+      }
+    }
+
+    function toggleLiveMode() {
+      isLiveMode = !isLiveMode;
+      localStorage.setItem('chint_live_mode', isLiveMode ? 'true' : 'false');
+      updateLiveToggleUI();
+
+      if (isLiveMode) {
+        setStreamStatus(true);
+        connectWS();
+        startPolling();
+      } else {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.close();
+        }
+        if (wsTimer) {
+          clearTimeout(wsTimer);
+          wsTimer = null;
+        }
+        stopPolling();
+        setStreamStatus(false);
+      }
+    }
+
     function setStreamStatus(live) {
       const badge = document.getElementById('badge-stream');
-      if (live) {
+      if (!badge) return;
+      if (!isLiveMode) {
+        badge.innerText = '⏸️ UPDATES PAUSED';
+        badge.className = 'badge';
+        badge.style = 'background:rgba(148,163,184,0.15); color:var(--muted); border:1px solid rgba(148,163,184,0.3);';
+      } else if (live) {
         badge.innerText = '⚡ LIVE WS (15Hz)';
         badge.className = 'badge badge-stream';
+        badge.style = '';
       } else {
         badge.innerText = '⏱ HTTP POLL (2s)';
         badge.className = 'badge';
@@ -186,6 +242,7 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     }
 
     function connectWS() {
+      if (!isLiveMode) return;
       try {
         ws = new WebSocket(wsUrl);
       } catch(e) {
@@ -199,6 +256,7 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
       };
 
       ws.onmessage = (e) => {
+        if (!isLiveMode) return;
         try {
           const data = JSON.parse(e.data);
           if (data.type === 'telemetry' || data.type === 'welcome') {
@@ -208,9 +266,10 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
       };
 
       ws.onclose = () => {
+        if (!isLiveMode) return;
         setStreamStatus(false);
         if (!wsTimer) {
-          wsTimer = setTimeout(() => { wsTimer = null; connectWS(); }, 2500);
+          wsTimer = setTimeout(() => { wsTimer = null; if (isLiveMode) connectWS(); }, 2500);
         }
       };
 
@@ -221,6 +280,7 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     }
 
     function updateUI(d) {
+      if (!isLiveMode || !d) return;
       if (d.watts !== undefined) document.getElementById('val-watts').innerText = d.watts.toFixed(1);
       if (d.volts !== undefined) document.getElementById('val-volts').innerText = d.volts.toFixed(1);
       if (d.amps !== undefined) document.getElementById('val-amps').innerText = d.amps.toFixed(2);
@@ -254,11 +314,12 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
       }
     }
 
-    // Polling fallback / system stats
     function pollHealth() {
+      if (!isLiveMode) return;
       fetch('/health')
         .then(r => r.json())
         .then(data => {
+          if (!isLiveMode) return;
           if (data.websocket) document.getElementById('val-clients').innerText = data.websocket.clients;
           if (data.uptime_sec !== undefined) document.getElementById('val-uptime').innerText = data.uptime_sec;
           if (data.wifi && data.wifi.rssi !== undefined) document.getElementById('val-rssi').innerText = data.wifi.rssi;
@@ -278,6 +339,20 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             });
           }
         }).catch(e => {});
+    }
+
+    function startPolling() {
+      if (!pollInterval && isLiveMode) {
+        pollHealth();
+        pollInterval = setInterval(pollHealth, 2000);
+      }
+    }
+
+    function stopPolling() {
+      if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+      }
     }
 
     function openModal() {
@@ -320,9 +395,24 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
       setTimeout(() => location.reload(), 6000);
     }
 
-    connectWS();
-    setInterval(pollHealth, 2000);
-    pollHealth();
+    document.addEventListener("visibilitychange", () => {
+      if (!isLiveMode) return;
+      if (document.hidden) {
+        if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+        stopPolling();
+      } else {
+        connectWS();
+        startPolling();
+      }
+    });
+
+    updateLiveToggleUI();
+    if (isLiveMode) {
+      connectWS();
+      startPolling();
+    } else {
+      setStreamStatus(false);
+    }
   </script>
 </body>
 </html>

@@ -38,6 +38,12 @@
     .btn-success:hover { background: rgba(16,185,129,0.35); }
     .btn-danger { background: rgba(239, 68, 68, 0.15); border: 1px solid var(--rose); color: var(--rose); padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 600; transition: background 0.2s; }
     .btn-danger:hover { background: rgba(239, 68, 68, 0.3); }
+    .btn-live-on { background: rgba(16, 185, 129, 0.15); color: var(--emerald); border: 1px solid rgba(16, 185, 129, 0.4); display: inline-flex; align-items: center; gap: 6px; }
+    .btn-live-on:hover { background: rgba(16, 185, 129, 0.25); }
+    .btn-live-off { background: rgba(148, 163, 184, 0.12); color: var(--text-dim); border: 1px solid rgba(148, 163, 184, 0.3); display: inline-flex; align-items: center; gap: 6px; }
+    .btn-live-off:hover { background: rgba(148, 163, 184, 0.2); color: var(--text); }
+    .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--emerald); box-shadow: 0 0 6px var(--emerald); display: inline-block; }
+    .live-dot.paused { background: var(--text-dim); box-shadow: none; }
     input[type=file] { color: var(--text-dim); font-size: 0.85rem; }
     /* Settings panel */
     .settings-toggle { width: 100%; background: none; border: 1px solid var(--border); border-radius: 8px; color: var(--text-dim); padding: 10px 16px; font-size: 0.88rem; cursor: pointer; display: flex; justify-content: space-between; align-items: center; margin-bottom: 0; transition: border-color 0.2s; }
@@ -66,6 +72,9 @@
       <p style="color: var(--text-dim); font-size: 0.85rem;">Zero-Export Real-Time Energy Bridge</p>
     </div>
     <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+      <button id="live-toggle-btn" class="btn btn-sm btn-live-on" onclick="toggleLiveMode()" title="Toggle real-time updates">
+        <span id="live-dot" class="live-dot"></span> <span id="live-text">Live: ON</span>
+      </button>
       <div id="conn-badge" class="badge badge-accent">⚡ LIVE STREAM (WS 5Hz)</div>
       <div id="sys-status" class="badge badge-ok">HEALTHY</div>
     </div>
@@ -365,7 +374,7 @@
 
     // ---- Dashboard Renderer (Used by both WS stream and HTTP fallback) ----
     function renderDashboard(d) {
-      if (!d) return;
+      if (!isLiveMode || !d) return;
 
       const badge = document.getElementById("sys-status");
       if (badge && d.status) {
@@ -552,23 +561,71 @@
     let ws = null;
     let wsReconnectTimer = null;
     let pollTimer = null;
+    let isLiveMode = localStorage.getItem("live_mode") !== "false";
+
+    function updateLiveToggleUI() {
+      const btn = document.getElementById("live-toggle-btn");
+      const dot = document.getElementById("live-dot");
+      const txt = document.getElementById("live-text");
+      if (!btn || !dot || !txt) return;
+
+      if (isLiveMode) {
+        btn.className = "btn btn-sm btn-live-on";
+        dot.className = "live-dot";
+        txt.innerText = "Live: ON";
+      } else {
+        btn.className = "btn btn-sm btn-live-off";
+        dot.className = "live-dot paused";
+        txt.innerText = "Live: PAUSED";
+      }
+    }
+
+    function toggleLiveMode() {
+      isLiveMode = !isLiveMode;
+      localStorage.setItem("live_mode", isLiveMode ? "true" : "false");
+      updateLiveToggleUI();
+
+      if (isLiveMode) {
+        setConnStatus("live");
+        initWebSocket();
+      } else {
+        // Stop stream and all updates
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.close();
+        }
+        if (wsReconnectTimer) {
+          clearTimeout(wsReconnectTimer);
+          wsReconnectTimer = null;
+        }
+        stopHttpPolling();
+        setConnStatus("paused");
+      }
+    }
 
     function setConnStatus(mode) {
       const badge = document.getElementById("conn-badge");
       if (!badge) return;
-      if (mode === "live") {
+      if (!isLiveMode || mode === "paused") {
+        badge.innerText = "⏸️ UPDATES PAUSED";
+        badge.className = "badge";
+        badge.style = "background: rgba(148, 163, 184, 0.15); color: var(--text-dim); border: 1px solid rgba(148, 163, 184, 0.3);";
+      } else if (mode === "live") {
         badge.innerText = "⚡ LIVE STREAM (WS 5Hz)";
         badge.className = "badge badge-accent";
+        badge.style = "";
       } else if (mode === "poll") {
         badge.innerText = "⏱ HTTP POLLING (2s)";
         badge.className = "badge badge-warn";
+        badge.style = "";
       } else {
         badge.innerText = "🔌 RECONNECTING...";
         badge.className = "badge badge-err";
+        badge.style = "";
       }
     }
 
     function initWebSocket() {
+      if (!isLiveMode) return;
       const wsHost = location.hostname || "10.0.0.110";
       const wsUrl = "ws://" + wsHost + ":81/";
 
@@ -601,22 +658,24 @@
 
       ws.onerror = (err) => {
         console.warn("[WS] Error, starting HTTP polling fallback");
-        startHttpPolling();
+        if (isLiveMode) startHttpPolling();
       };
 
       ws.onclose = () => {
-        console.warn("[WS] Disconnected, starting HTTP fallback");
+        console.warn("[WS] Disconnected");
+        if (!isLiveMode) return;
         startHttpPolling();
         if (!wsReconnectTimer) {
           wsReconnectTimer = setTimeout(() => {
             wsReconnectTimer = null;
-            initWebSocket();
+            if (isLiveMode) initWebSocket();
           }, 3000);
         }
       };
     }
 
     async function pollHttp() {
+      if (!isLiveMode) return;
       try {
         const res = await fetch("/health");
         if (res.ok) {
@@ -630,6 +689,7 @@
     }
 
     function startHttpPolling() {
+      if (!isLiveMode) return;
       setConnStatus("poll");
       if (!pollTimer) {
         pollHttp();
@@ -726,6 +786,7 @@
     }
 
     document.addEventListener("visibilitychange", () => {
+      if (!isLiveMode) return;
       if (document.hidden) {
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.close();
@@ -736,8 +797,13 @@
       }
     });
 
-    // Start WebSocket stream on load
-    initWebSocket();
+    // Initialize Live Mode UI & Stream on load
+    updateLiveToggleUI();
+    if (isLiveMode) {
+      initWebSocket();
+    } else {
+      setConnStatus("paused");
+    }
   </script>
 </body>
 </html>
