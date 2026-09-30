@@ -22,7 +22,9 @@ This repository contains firmware to emulate **two independent CHINT DDSU666 Mod
   - [Configuration (`secrets.h`)](#configuration-secretsh)
   - [Compiling & Flashing (PlatformIO)](#compiling--flashing-platformio)
   - [ESP32-C3 SuperMini Wireless Transmitter Bridge](#esp32-c3-supermini-wireless-transmitter-bridge)
-  - [Embedded WebUI & Diagnostic Health API](#embedded-webui--diagnostic-health-api)
+  - [Embedded SPA WebUI & Live WebSocket Telemetry (Port 81)](#embedded-spa-webui--live-websocket-telemetry-port-81)
+  - [Home Assistant MQTT Auto-Discovery](#-home-assistant-mqtt-auto-discovery)
+  - [Dedicated Chint DDSU666 Master Reader](#-dedicated-chint-ddsu666-master-reader-chint_ddsu666_reader)
 - [Feature Comparison: ESPHome vs Native C++](#-feature-comparison-esphome-vs-native-c)
 - [Troubleshooting & Diagnostics](#-troubleshooting--diagnostics)
 
@@ -33,18 +35,30 @@ This repository contains firmware to emulate **two independent CHINT DDSU666 Mod
 Hoymiles HYS/HYB hybrid inverters poll two CHINT DDSU666 meters over RS-485 Modbus RTU at 9600 baud (8N1):
 
 ```
-┌──────────────────────────┐                   ┌───────────────────────────────┐
-│  Shelly Pro EM 50A       │──[MQTT / WS]─────>│                               │
-│  (Main House Grid Meter) │                   │  ESP32 Meter Emulator         │──[RS-485 Modbus RTU]──> Hoymiles Hybrid Inverter
-├──────────────────────────┤                   │  • Slave ID 2: Grid Meter     │   (COM Port Pins 1 & 2)  (HYS / HYB Series)
-│  Hoymiles DTU-Lite-S     │──[Direct TCP]────>│  • Slave ID 1: PV Solar Meter │
-│    -- OR --              │                   │                               │
-│  OpenDTU-onBattery       │──[MQTT]──────────>│                               │
-└──────────────────────────┘                   └───────────────────────────────┘
+┌─────────────────────────────────┐
+│  Chint DDSU666 Reader           │──[WebSocket :81]─┐
+│  (chint-reader.local / .197)    │                  │
+├─────────────────────────────────┤                  ▼
+│  Shelly Pro EM 50A              │──[WebSocket / RPC]──>┌───────────────────────────────────────────────┐
+│  (Main House Grid Meter)        │                      │  DDSU666 Dual-Meter Emulator                  │──[RS-485 Modbus RTU]──> Hoymiles Hybrid Inverter
+├─────────────────────────────────┤                      │  (ddsu666.local / .169)                       │   (COM Port Pins 1 & 2)  (HYS / HYB Series)
+│  OpenDTU-onBattery / Solar      │──[MQTT Telemetry]───>│  • Slave ID 2: Grid Meter                     │   (~14.8 Hz Polling, 0 CRC Errors)
+│  (10.0.0.1:1883)                │                      │  • Slave ID 1: PV Solar Meter                 │
+├─────────────────────────────────┤                      │  • WebSocket Live Stream (:81)                │
+│  Sonoff POWCT (ESP-NOW)         │──[ESP-NOW 2.4GHz]───>│  • HA MQTT Auto-Discovery (14 Sensors)       │
+└─────────────────────────────────┘                      └───────────────────────────────────────────────┘
+                                                                 │
+                                                                 ▼
+                                                        ┌───────────────────────────────────────────────┐
+                                                        │  Home Assistant Dashboard                     │
+                                                        │  (Instant Device Discovery + State Telemetry) │
+                                                        └───────────────────────────────────────────────┘
 ```
 
 - **Slave ID 2 (Grid Meter)**: Emulates the main grid connection meter. Provides active power, voltage, current, power factor, frequency, and cumulative import/export kWh for the inverter's **Zero-Export (Autoconsumo)** PID control loop.
-- **Slave ID 1 (PV Meter)**: Emulates a PV string meter using generation data polled directly from **Hoymiles DTU-Lite-S** over local TCP, or via **OpenDTU** MQTT. Allows the inverter to display solar generation and battery charging on the Hoymiles S-Miles app without a separate physical CT.
+- **Slave ID 1 (PV Meter)**: Emulates a PV string meter using generation data polled from **OpenDTU-onBattery** or **ESP-NOW**. Allows the inverter to display solar generation and battery charging on the Hoymiles S-Miles app without a separate physical CT.
+- **mDNS Discovery**: Zero-configuration `.local` domain access (`http://ddsu666.local` and `http://chint-reader.local`).
+- **Home Assistant Auto-Discovery**: 14 sensors announced automatically to MQTT with device registry integration, LWT availability, and a 2-second telemetry cadence.
 
 ---
 
@@ -402,44 +416,109 @@ pio run -e esp32-c3-supermini -t upload
 
 ---
 
-### Embedded WebUI & Diagnostic Health API
+### Embedded SPA WebUI & Live WebSocket Telemetry (Port 81)
 
-The native C++ firmware hosts a dark-mode diagnostic web dashboard at `http://<ESP32_IP>/`:
+Both the **DDSU666 Emulator** and the **Chint Master Reader** feature modern Single-Page Applications (SPA) with zero server-side rendering (SSR) overhead:
 
-- **Hoymiles Inverter Link**: Shows live RS-485 polling rate (e.g., `ACTIVE (14.6 Hz, last query 0.1s ago)`).
-- **Grid Power Card**: Real-time wattage, direction (Import / Export / Balanced), voltage, current, and power factor.
-- **Shelly WebSocket Badge**: Direct link status and latency.
-- **ESP-NOW Link Card**: Active packets received, RSSI, and sender MAC.
-- **JSON Health API**: Accessible programmatically at `http://<ESP32_IP>/health`:
+- **Zero-Configuration mDNS**:
+  - Emulator: **`http://ddsu666.local`** (or `http://<EMULATOR_IP>/`)
+  - Chint Reader: **`http://chint-reader.local`** (or `http://<CHINT_IP>/`)
+- **Real-Time WebSocket Stream (Port 81)**:
+  - Connects directly to `ws://<DEVICE_IP>:81` for sub-200ms telemetry streaming at 5 Hz.
+  - Interactive **Live Mode Toggle**: Pause telemetry to eliminate browser CPU/network consumption, with automatic reconnect upon unpausing.
+- **Bi-Directional Action Control**: Change Grid priority mode, PV priority, or filter damping algorithms directly from the UI without rebooting.
+- **Diagnostic Health JSON API**: Accessible programmatically at `http://ddsu666.local/health` or `http://<IP>/health`:
   ```json
   {
     "status": "HEALTHY",
-    "uptime_sec": 308,
-    "wifi": { "connected": true, "ip": "10.0.0.110", "rssi": -40 },
-    "espnow": { "enabled": true, "packets": 398, "last_watts": -8.8, "rssi": -93 },
-    "shelly": { "ws_connected": true, "ip": "10.0.0.187", "age_sec": 0 },
-    "modbus": { "rs485_active": true, "queries": 4474, "crc_errors": 0, "rate_hz": 14.6 },
-    "grid": { "source": "ESPNOW", "watts": -8.8, "flow": "EXPORT", "volts": 242.0 },
-    "pv": { "watts": 0, "yield_kwh": 835.2 }
+    "uptime_sec": 31541,
+    "free_heap": 260228,
+    "priority": { "mode": 0, "description": "Auto: Chint WS -> Shelly WS" },
+    "pv_priority": { "mode": 2, "description": "OpenDTU MQTT Only" },
+    "wifi": { "connected": true, "ip": "10.0.0.169", "rssi": -46 },
+    "chint": { "ws_connected": true, "ip": "10.0.0.197", "age_sec": 0 },
+    "shelly": { "ws_connected": true, "ip": "10.0.0.187", "age_sec": 0.3 },
+    "opendtu": { "mqtt_connected": true, "age_sec": 0 },
+    "modbus": {
+      "rs485_active": true,
+      "queries": 312781,
+      "crc_errors": 0,
+      "rate_hz": 14.8,
+      "inverter_connected": true
+    },
+    "grid": {
+      "source": "CHINT_WS",
+      "filter": "damped",
+      "watts": -66.5,
+      "flow": "EXPORT",
+      "volts": 246.7,
+      "amps": 2.31,
+      "pf": -0.10,
+      "freq": 50.0,
+      "import_kwh": 19.25,
+      "export_kwh": 1.45
+    },
+    "pv": { "source": "OPENDTU_MQTT", "watts": 0, "yield_kwh": 0 }
   }
   ```
 
 ---
 
+### 🏠 Home Assistant MQTT Auto-Discovery
+
+The emulator connects to your local MQTT broker (configured in `AppConfig` or WebUI) using a unified, non-blocking `MqttManager` transport. Upon connection, it automatically announces 14 first-class sensor entities to Home Assistant:
+
+- **Discovery Prefix**: `homeassistant/sensor/ddsu666_emulator/<sensor_id>/config` (Retained)
+- **State Topic**: `ddsu666_emulator/state` (Published every 2.0 seconds)
+- **Availability Topic**: `ddsu666_emulator/status` (`online` / `offline` with MQTT Last Will and Testament)
+- **Device Registry**: All sensors group under a single device named **`DDSU666 Modbus Emulator`** with a clickable link directly to `http://ddsu666.local`.
+
+#### Published Sensor Entities:
+| Entity ID | Friendly Name | Unit | Device Class | State Class | Description |
+| :--- | :--- | :---: | :---: | :---: | :--- |
+| `grid_power` | Grid Active Power | W | `power` | `measurement` | Real-time net grid import (+) / export (−) |
+| `pv_power` | PV Active Power | W | `power` | `measurement` | Solar generation feeding the emulator |
+| `grid_voltage` | Grid Voltage | V | `voltage` | `measurement` | Line RMS voltage |
+| `grid_current` | Grid Current | A | `current` | `measurement` | Line RMS current |
+| `grid_frequency` | Grid Frequency | Hz | `frequency`| `measurement` | AC line frequency (50 Hz / 60 Hz) |
+| `grid_power_factor` | Grid Power Factor | — | `power_factor` | `measurement` | Grid displacement power factor |
+| `import_energy` | Grid Import Energy | kWh | `energy` | `total_increasing` | Cumulative imported energy |
+| `export_energy` | Grid Export Energy | kWh | `energy` | `total_increasing` | Cumulative exported solar energy |
+| `pv_yield` | PV Total Yield | kWh | `energy` | `total_increasing` | Cumulative solar yield from OpenDTU |
+| `modbus_query_rate` | Inverter Query Rate | Hz | — | `measurement` | Real-time Modbus query frequency (~14.8 Hz) |
+| `modbus_crc_errors` | Modbus CRC Errors | — | — | `total_increasing` | RS-485 transmission integrity counter |
+| `active_grid_source`| Active Grid Source | — | — | — | Current active provider (`CHINT_WS`, `SHELLY_WS`) |
+| `active_pv_source` | Active PV Source | — | — | — | Current solar provider (`OPENDTU_MQTT`, `ESPNOW`) |
+| `filter_mode` | Power Filter Mode | — | — | — | Active smoothing algorithm (`damped`, `raw`) |
+
+---
+
+### 📡 Dedicated Chint DDSU666 Master Reader (`chint_ddsu666_reader/`)
+
+For installations where the physical Chint DDSU666 meter is in a main distribution box, the `chint_ddsu666_reader` firmware turns a second Seeed XIAO ESP32-S3 into a high-speed wireless bridge:
+
+- **Hardware Task Isolation**: Dedicated Core 1 Modbus RTU master querying the physical meter at **~14.6 Hz** (sub-60ms response latency).
+- **Persistent NVS Preferences**: Configured Modbus Slave ID is persisted in ESP32 NVS under namespace `"chint"`, surviving power cuts and reboots.
+- **WebSocket Streaming**: Broadcasts fresh telemetry frames directly over `ws://chint-reader.local:81` to the emulator and web dashboards.
+- **Embedded Web UI & OTA**: Reachable at `http://chint-reader.local` for live diagnostics and passwordless firmware updates.
+
+---
+
 ## 📊 Feature Comparison: ESPHome vs Native C++
 
-| Feature | ESPHome Solution (Primary) | Native C++ Solution (Advanced) |
+| Feature | ESPHome (Legacy) | Native C++ / FreeRTOS (Current Production) |
 | :--- | :--- | :--- |
-| **Target Audience** | Home Assistant users, quick setup | Performance enthusiasts, zero-export perfection |
-| **Grid Data Source** | MQTT (`shelly-em/realtime` via Shelly script) | Direct Shelly WebSocket (`ws://<IP>/rpc`) + ESP-NOW |
-| **Update Interval** | 500 ms | **200 ms** (5 Hz) |
-| **Modbus Core Allocation** | Shared FreeRTOS event loop | **Dedicated Core 1** (Dual-core isolation) |
-| **Inverter Query Rate** | ~5–10 Hz | **14–15 Hz** (Instantaneous hardware response) |
-| **MQTT Broker Needed?** | Yes | Optional (only for OpenDTU PV meter) |
-| **Home Assistant Integration** | **Native 1-click discovery & control** | Sensor entities via MQTT / REST API |
-| **Web Interface** | Standard ESPHome web server | Custom high-speed WebUI dashboard |
-| **Hardware Failsafes** | Yes (10s watchdog cuts RS-485 bus power) | Yes (10s watchdog cuts RS-485 bus power) |
-| **ESP-NOW Wireless Bridge** | No | **Yes** (ESP32-C3 SuperMini support) |
+| **Status** | Legacy reference | **Primary production architecture** |
+| **Grid Data Sources** | MQTT (`shelly-em/realtime`) | **Chint WebSocket (:81) + Shelly WS (:80) + ESP-NOW** |
+| **Priority Arbitration** | Manual config | **Automatic dynamic failover (Chint -> Shelly in 4s)** |
+| **Update Cadence** | ~500 ms (cooperative) | **Instant hardware turnaround (5 Hz stream, 14.8 Hz Modbus)** |
+| **Modbus Core Allocation**| Shared event loop | **Dedicated Core 1 FreeRTOS Task (0 jitter)** |
+| **Inverter Query Rate** | ~5–10 Hz | **~14.8 Hz (Full inverter speed, 0 CRC errors)** |
+| **Home Assistant Integration** | Native ESPHome | **Automatic MQTT Discovery (14 Entities + Device Card + LWT)** |
+| **mDNS Discovery** | Standard ESPHome | **`ddsu666.local` & `chint-reader.local` (HTTP + WS)** |
+| **Web Interface** | Basic ESPHome server | **Compressed SPA Dashboard + WebSocket stream + Live toggle** |
+| **Power Smoothing** | Simple moving average | **Multi-Zone Non-Linear Adaptive Damping Filter** |
+| **Hardware Failsafes** | Yes (10s watchdog) | **Yes (Dual-layer hardware task watchdog + RS-485 bus power)** |
 
 ---
 
