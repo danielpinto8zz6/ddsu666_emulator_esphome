@@ -81,6 +81,7 @@ void TelemetryManager::begin() {
 void TelemetryManager::connectWiFi() {
   if (WiFi.status() == WL_CONNECTED) return;
   const SystemSettings &s = AppConfig::getInstance().get();
+  WiFi.setHostname("ddsu666");
   Serial.printf("[WiFi] Connecting to %s", s.wifi_ssid.c_str());
   WiFi.begin(s.wifi_ssid.c_str(), s.wifi_pass.c_str());
   unsigned long start = millis();

@@ -14,6 +14,9 @@
 #include "telemetry/grid_arbitrator.h"
 #include "telemetry/pv_arbitrator.h"
 #include "web_server.h"
+#include <ESPmDNS.h>
+#include "mqtt/mqtt_manager.h"
+#include "ha_discovery.h"
 
 #define WDT_TIMEOUT_SECONDS 15
 
@@ -31,7 +34,11 @@ static ShellyWsSource         s_shellySource;
 static OpenDtuMqttSource      s_opendtuSource;
 static EspNowPvSource         s_espnowSource;
 
+// Home Assistant Discovery & Telemetry Publisher (SOLID: SRP & DIP)
+static HaDiscovery            s_haDiscovery;
+
 static bool s_webInitialized = false;
+static bool s_mdnsInitialized = false;
 volatile UBaseType_t g_networkTaskStackHWM = 0;  // sampled every loop iteration (#4)
 
 // High-Priority Real-Time Modbus Task on Core 1
@@ -66,6 +73,10 @@ void networkTask(void *param) {
   s_shellySource.setIp(s.shelly_ip);
   s_opendtuSource.setBroker(s.mqtt_broker, s.mqtt_port, s.mqtt_user, s.mqtt_pass);
 
+  // Initialize unified MQTT Engine & Home Assistant Auto-Discovery
+  MqttManager::getInstance().begin(s.mqtt_broker, s.mqtt_port, s.mqtt_user, s.mqtt_pass);
+  s_haDiscovery.begin(&s_modbusServer, &s_telemetryManager);
+
   // Register sources with TelemetryManager (Dependency Injection / OCP)
   s_telemetryManager.registerSource(&s_chintSource);
   s_telemetryManager.registerSource(&s_shellySource);
@@ -79,8 +90,17 @@ void networkTask(void *param) {
 
     s_telemetryManager.loop();
 
-    // Start web server once Wi-Fi has acquired a valid IP address
+    // Start web server and mDNS responder once Wi-Fi has acquired a valid IP address
     if (s_telemetryManager.isWiFiConnected()) {
+      if (!s_mdnsInitialized) {
+        if (MDNS.begin("ddsu666")) {
+          Serial.println("[mDNS] Responder active at http://ddsu666.local");
+          MDNS.addService("http", "tcp", 80);
+          MDNS.addService("ws", "tcp", 81);
+          s_mdnsInitialized = true;
+        }
+      }
+
       if (!s_webInitialized) {
         initWebServer(s_modbusServer, s_telemetryManager);
         s_webInitialized = true;
@@ -88,7 +108,12 @@ void networkTask(void *param) {
       handleWebServer();
     } else {
       s_webInitialized = false;
+      s_mdnsInitialized = false;
     }
+
+    // Service Unified MQTT Stack & Home Assistant Telemetry cadence
+    MqttManager::getInstance().loop();
+    s_haDiscovery.loop();
 
     // Sample stack high-water mark for /health diagnostic (#4)
     g_networkTaskStackHWM = uxTaskGetStackHighWaterMark(NULL);

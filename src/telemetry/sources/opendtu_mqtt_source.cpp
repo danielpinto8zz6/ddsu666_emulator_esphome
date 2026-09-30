@@ -2,64 +2,29 @@
 #include <WiFi.h>
 #include "config.h"
 
-OpenDtuMqttSource::OpenDtuMqttSource(const String &broker, uint16_t port,
-                                     const String &user, const String &pass)
-  : _broker(broker), _port(port), _user(user), _pass(pass), _mqtt(_wifiClient) {
+OpenDtuMqttSource::OpenDtuMqttSource(MqttManager &mqtt)
+  : _mqtt(mqtt) {
 }
 
 void OpenDtuMqttSource::begin(ITelemetrySink *sink) {
   _sink = sink;
-  _mqtt.setServer(_broker.c_str(), _port);
-  _mqtt.setBufferSize(768);
-  _mqtt.setCallback([this](char *topic, uint8_t *payload, unsigned int length) {
+  _mqtt.subscribe(TOPIC_OPENDTU_POWER, [this](const char *topic, const uint8_t *payload, unsigned int length) {
+    this->onMessage(topic, payload, length);
+  });
+  _mqtt.subscribe(TOPIC_OPENDTU_YIELD, [this](const char *topic, const uint8_t *payload, unsigned int length) {
     this->onMessage(topic, payload, length);
   });
 }
 
 void OpenDtuMqttSource::setBroker(const String &broker, uint16_t port, const String &user, const String &pass) {
-  _broker = broker;
-  _port = port;
-  _user = user;
-  _pass = pass;
-  _mqtt.setServer(_broker.c_str(), _port);
-  if (_mqtt.connected()) {
-    _mqtt.disconnect();
-  }
+  _mqtt.setBroker(broker, port, user, pass);
 }
 
 void OpenDtuMqttSource::loop() {
-  if (!_mqtt.connected()) {
-    connect();
-  } else {
-    _mqtt.loop();
-  }
+  // Handled centrally by MqttManager in networkTask
 }
 
-void OpenDtuMqttSource::connect() {
-  if (WiFi.status() != WL_CONNECTED) return;
-
-  uint32_t now = millis();
-  if (now - _lastReconnectAttempt < 5000) return; // Retry every 5s
-  _lastReconnectAttempt = now;
-
-  Serial.print("[OpenDTU MQTT] Connecting to broker...");
-  bool ok;
-  if (_user.length() > 0) {
-    ok = _mqtt.connect("DDSU666_OpenDTU_Bridge", _user.c_str(), _pass.c_str());
-  } else {
-    ok = _mqtt.connect("DDSU666_OpenDTU_Bridge");
-  }
-
-  if (ok) {
-    Serial.println(" connected!");
-    _mqtt.subscribe(TOPIC_OPENDTU_POWER);
-    _mqtt.subscribe(TOPIC_OPENDTU_YIELD);
-  } else {
-    Serial.printf(" failed, rc=%d. Retrying in 5s\n", _mqtt.state());
-  }
-}
-
-void OpenDtuMqttSource::onMessage(char *topic, uint8_t *payload, unsigned int length) {
+void OpenDtuMqttSource::onMessage(const char *topic, const uint8_t *payload, unsigned int length) {
   char msg[64];
   if (length >= sizeof(msg)) return;
   memcpy(msg, payload, length);
@@ -93,4 +58,3 @@ void OpenDtuMqttSource::populateHealth(JsonObject &obj) const {
   float age = getAgeSeconds();
   obj["age_sec"] = (age >= 0.0f) ? std::round(age * 10.0f) / 10.0f : -1.0f;
 }
-

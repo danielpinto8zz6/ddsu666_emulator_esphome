@@ -4,6 +4,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/portmacro.h>
 #include <driver/uart.h>
+#include <Preferences.h>
 #include "interfaces.h"
 
 /**
@@ -30,6 +31,7 @@ public:
 private:
   uint8_t _slaveId;
   OnDataCallback _dataCb;
+  Preferences _prefs;
 
   ChintTelemetry _telemetry;
   ModbusMasterStats _stats;

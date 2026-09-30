@@ -1,5 +1,6 @@
 #include "ddsu666_master.h"
 #include "chint_reader_config.h"
+#include <Preferences.h>
 #include <cmath>
 #include <cstring>
 
@@ -76,8 +77,15 @@ float DDSU666Master::parseIEEE754(const uint8_t *p) {
 }
 
 void DDSU666Master::begin(uint8_t slaveId) {
-  _slaveId = slaveId;
-  _stats.slave_id = slaveId;
+  _prefs.begin("chint", false);
+  uint8_t savedSlaveId = _prefs.getUChar("slave_id", slaveId);
+  if (savedSlaveId >= 1 && savedSlaveId <= 247) {
+    _slaveId = savedSlaveId;
+  } else {
+    _slaveId = slaveId;
+  }
+  _stats.slave_id = _slaveId;
+  Serial.printf("[DDSU666Master] Configured Modbus Slave ID: %u (default was: %u)\n", _slaveId, slaveId);
 
   pinMode(PIN_RS485_DE_RE, OUTPUT);
   digitalWrite(PIN_RS485_DE_RE, LOW); // Receive mode
@@ -106,10 +114,17 @@ void DDSU666Master::begin(uint8_t slaveId) {
 }
 
 void DDSU666Master::setSlaveId(uint8_t slaveId) {
+  if (slaveId < 1 || slaveId > 247) {
+    Serial.printf("[DDSU666Master] Invalid Slave ID: %u (must be 1-247)\n", slaveId);
+    return;
+  }
   portENTER_CRITICAL(&_spinlock);
   _slaveId = slaveId;
   _stats.slave_id = slaveId;
   portEXIT_CRITICAL(&_spinlock);
+
+  _prefs.putUChar("slave_id", slaveId);
+  Serial.printf("[DDSU666Master] Persisted Modbus Slave ID %u to NVS\n", slaveId);
 }
 
 ChintTelemetry DDSU666Master::getTelemetry() {

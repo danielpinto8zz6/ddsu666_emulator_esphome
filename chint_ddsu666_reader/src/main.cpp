@@ -2,7 +2,9 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Update.h>
+#include <Preferences.h>
 #include <esp_task_wdt.h>
+#include <ESPmDNS.h>
 #include "chint_reader_config.h"
 #include "ddsu666_master.h"
 #include "websocket_server_mgr.h"
@@ -15,6 +17,20 @@ static ChintWebServer          s_webServer(s_modbusMaster, s_wsManager, 80);
 
 // Thread-safe IPC Queue between Core 1 (Modbus Master) and Core 0 (Network / WebSockets)
 static QueueHandle_t s_telemetryQueue = nullptr;
+static bool          s_mdnsStarted = false;
+
+static void checkMdns() {
+  if (WiFi.status() == WL_CONNECTED && !s_mdnsStarted) {
+    if (MDNS.begin("chint-reader")) {
+      Serial.println("[mDNS] Responder active at http://chint-reader.local");
+      MDNS.addService("http", "tcp", 80);
+      MDNS.addService("ws", "tcp", WS_SERVER_PORT);
+      s_mdnsStarted = true;
+    }
+  } else if (WiFi.status() != WL_CONNECTED) {
+    s_mdnsStarted = false;
+  }
+}
 
 /**
  * @brief Dedicated High-Speed Modbus RTU Master Task on Core 1.
@@ -53,6 +69,7 @@ void setup() {
 
   // Connect to Local Wi-Fi Network
   WiFi.mode(WIFI_STA);
+  WiFi.setHostname("chint-reader");
   WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.printf("[WiFi] Connecting to %s", WIFI_SSID);
@@ -63,6 +80,7 @@ void setup() {
   }
   if (WiFi.status() == WL_CONNECTED) {
     Serial.printf("\n[WiFi] Connected! IP: %s\n", WiFi.localIP().toString().c_str());
+    checkMdns();
   } else {
     Serial.println("\n[WiFi] Offline start — will reconnect in background.");
   }
@@ -96,6 +114,7 @@ void setup() {
 
 void loop() {
   // Service Network Stack (Core 0)
+  checkMdns();
   s_webServer.loop();
   s_wsManager.loop();
 
