@@ -4,7 +4,8 @@
 # Supports:
 #   - Lilygo T-CAN485 (ESP32)
 #   - Waveshare ESP32-S3 RS485/CAN
-#   - ESP32-C3 SuperMini / Lolin C3 Mini (Transmitter)
+#   - Seeed Studio XIAO ESP32-S3 (Emulator)
+#   - Seeed Studio XIAO ESP32-S3 (Chint DDSU666 Reader)
 # ==============================================================================
 
 set -euo pipefail
@@ -24,7 +25,6 @@ usage() {
     echo "  waveshare   Waveshare ESP32-S3 RS485"
     echo "  xiao        Seeed Studio XIAO ESP32-S3 RS485"
     echo "  chint-reader Seeed Studio XIAO ESP32-S3 Chint Master (WS Server)"
-    echo "  supermini   ESP32-C3 SuperMini Transmitter"
     echo ""
     echo -e "${CYAN}Options:${NC}"
     echo "  --build     Force re-compile with PlatformIO before uploading"
@@ -32,7 +32,7 @@ usage() {
     echo -e "${CYAN}Examples:${NC}"
     echo "  $0 lilygo 10.0.0.110"
     echo "  $0 xiao 10.0.0.115 --build"
-    echo "  $0 supermini 10.0.0.125 --build"
+    echo "  $0 chint-reader 10.0.0.197 --build"
     echo "  $0 waveshare 10.0.0.110"
     exit 1
 }
@@ -62,14 +62,6 @@ case "$TARGET" in
     xiao|seeed_xiao|xiao-s3)
         ENV_NAME="xiao-esp32-s3"
         BIN_PATH=".pio/build/xiao-esp32-s3/firmware.bin"
-        ;;
-    xiao-tx|xiao-transmitter|xiao-s3-tx)
-        ENV_NAME="xiao-esp32-s3-transmitter"
-        BIN_PATH=".pio/build/xiao-esp32-s3-transmitter/firmware.bin"
-        ;;
-    supermini|c3|lolin)
-        ENV_NAME="esp32-c3-supermini"
-        BIN_PATH=".pio/build/esp32-c3-supermini/firmware.bin"
         ;;
     chint-reader|chint|ddsu666-reader)
         ENV_NAME="chint-reader-xiao-s3"

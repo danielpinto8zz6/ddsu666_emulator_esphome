@@ -21,7 +21,6 @@ This repository contains firmware to emulate **two independent CHINT DDSU666 Mod
   - [Key Advantages](#key-advantages)
   - [Configuration (`secrets.h`)](#configuration-secretsh)
   - [Compiling & Flashing (PlatformIO)](#compiling--flashing-platformio)
-  - [ESP32-C3 SuperMini Wireless Transmitter Bridge](#esp32-c3-supermini-wireless-transmitter-bridge)
   - [Embedded SPA WebUI & Live WebSocket Telemetry (Port 81)](#embedded-spa-webui--live-websocket-telemetry-port-81)
   - [Home Assistant MQTT Auto-Discovery](#-home-assistant-mqtt-auto-discovery)
   - [Dedicated Chint DDSU666 Master Reader](#-dedicated-chint-ddsu666-master-reader-chint_ddsu666_reader)
@@ -180,22 +179,10 @@ ddsu666_emulator_esphome/
 │           └── espnow_pv_source.cpp/.h     # Sonoff POWCT ESP-NOW binary receiver
 ├── web_ui_source.html              # Uncompressed HTML/CSS/JS source for WebUI
 │
-├── chint_ddsu666_reader/           # Clean Core Split RS-485 Master Reader (14.5 Hz)
-│   ├── platformio.ini              # Xiao ESP32-S3 build environment
-│   ├── include/                    # Reader configuration and Modbus definitions
-│   └── src/                        # Dedicated Core 1 Modbus engine & Core 0 WebSocket server
-│
-├── shelly_espnow_transmitter/      # ESP32-C3 SuperMini Wireless Transmitter Bridge
-│   ├── platformio.ini              # Transmitter build environment
-│   ├── include/                    # Transmitter headers
-│   │   ├── transmitter_config.h    # Wi-Fi, Shelly IP, and broadcast/unicast settings
-│   │   ├── packet_format.h         # Binary packet structure (Magic 0xD5)
-│   │   └── lolin_web_ui.h          # Compressed web dashboard
-│   ├── src/main.cpp                # Shelly WebSocket client & ESP-NOW broadcaster
-│   └── transmitter_web_ui_source.html # Transmitter web dashboard source
-│
-└── examples/
-    └── espnow_transmitter_example.ino # Minimal standalone Arduino transmitter
+└── chint_ddsu666_reader/           # Clean Core Split RS-485 Master Reader (14.5 Hz)
+    ├── platformio.ini              # Xiao ESP32-S3 build environment
+    ├── include/                    # Reader configuration and Modbus definitions
+    └── src/                        # Dedicated Core 1 Modbus engine & Core 0 WebSocket server
 ```
 
 ---
@@ -317,7 +304,7 @@ The **Native C++** implementation is an ultra-high-performance alternative engin
 * **Direct Shelly WebSocket Client (200ms)**: Connects directly to `ws://<SHELLY_IP>/rpc` without requiring an MQTT broker or Shelly script.
 * **Direct Hoymiles DTU-Lite-S / DTU-WLite Polling**: Direct TCP polling on port `10081` with hardware-accelerated AES-128-GCM decryption and automatic clock sync—no OpenDTU or external gateway required.
 * **Rolling Modbus Health & Query Rate Monitor**: WebUI displays live query frequency (~14.5 Hz) and inverter link status.
-* **ESP-NOW Wireless Bridge Support**: Allows an optional satellite microcontroller (ESP32-C3 SuperMini) to beam telemetry directly over the air.
+* **Dedicated Chint DDSU666 Modbus Master Support**: High-speed wireless telemetry stream from physical meter at ~14.6 Hz.
 
 ---
 
@@ -389,29 +376,6 @@ Future updates can be uploaded directly over HTTP using the included script or c
 
 # Or directly via curl:
 curl -u "admin:admin" -F "file=@.pio/build/xiao-esp32-s3/firmware.bin" -H "Expect:" http://<ESP32_IP>/update?password=admin
-```
-
----
-
-### ESP32-C3 SuperMini Wireless Transmitter Bridge
-
-If your Shelly Pro EM is located in a main electrical panel far from the inverter, running long Ethernet or RS-485 cables can be challenging.
-
-The [`shelly_espnow_transmitter/`](file:///home/danielpinto/Documentos/ddsu666_emulator_esphome/shelly_espnow_transmitter/) subproject allows a miniature **ESP32-C3 SuperMini** (or Lolin C3 Mini) to act as a wireless bridge:
-
-```
-[Main Electrical Panel]                                  [Inverter Location]
- Shelly Pro EM 50A ──(WiFi/WS)──> ESP32-C3 SuperMini ──(ESP-NOW 2.4GHz)──> LILYGO T-CAN485 ──(RS485)──> Hoymiles Inverter
-```
-
-- **Zero Router Congestion**: Uses low-latency 2.4 GHz ESP-NOW frames (sub-5ms transit time).
-- **Auto-Learning Receiver**: The Lilygo automatically discovers and tracks the transmitter's MAC address on the first packet.
-- **Broadcast & Unicast Modes**: Defaults to robust Broadcast mode (`FF:FF:FF:FF:FF:FF`) for 100% transmission throughput without pairing, with optional Unicast targeting the Lilygo MAC.
-- **Onboard Status LED (GPIO 8)**: Blinks while connecting to Wi-Fi, stays OFF when idle, and emits a crisp 20ms pulse on every transmitted packet.
-
-#### Flashing the ESP32-C3 SuperMini:
-```bash
-pio run -e esp32-c3-supermini -t upload
 ```
 
 ---
