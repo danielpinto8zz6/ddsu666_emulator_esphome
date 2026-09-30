@@ -1,10 +1,10 @@
 #include "pv_arbitrator.h"
 
 DefaultPvArbitrator::DefaultPvArbitrator(PvPriorityMode mode)
-  : _mode(mode) {}
+  : _mode(mode > PV_PRI_DISABLED ? DEFAULT_PV_PRIORITY_MODE : mode) {}
 
 void DefaultPvArbitrator::setMode(PvPriorityMode mode) {
-  _mode = mode;
+  _mode = (mode > PV_PRI_DISABLED) ? DEFAULT_PV_PRIORITY_MODE : mode;
 }
 
 const char* DefaultPvArbitrator::getDescription() const {
