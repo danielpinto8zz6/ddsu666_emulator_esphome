@@ -154,8 +154,16 @@ ddsu666_emulator_esphome/
 │   ├── modbus_rtu.cpp / .h         # High-speed Modbus RTU slave engine (Core 1)
 │   ├── meter_data.cpp              # Telemetry sync & Modbus FP32 conversions
 │   ├── grid_filter.cpp / .h        # Multi-Zone Precision Damping Filter for Zero-Export
-│   ├── mqtt_manager.cpp / .h       # Chint & Shelly WebSocket clients & MQTT (Core 0)
-│   └── web_server.cpp / .h         # REST API & WebUI dashboard (Core 0)
+│   ├── web_server.cpp / .h         # REST API & WebUI dashboard (Core 0)
+│   └── telemetry/                  # Telemetry Source & Sink Abstraction Layer
+│       ├── telemetry_types.h       # Normalized Grid & PV measurement structures
+│       ├── telemetry_source.h      # ITelemetrySource & ITelemetrySink interfaces
+│       ├── telemetry_manager.cpp/.h# Core hub: arbitration, filtering, watchdogs & failsafes
+│       └── sources/                # Pluggable Technology Drivers
+│           ├── chint_ws_source.cpp/.h      # Chint DDSU666 Master WebSocket client
+│           ├── shelly_ws_source.cpp/.h     # Shelly Pro EM RPC WebSocket client
+│           ├── opendtu_mqtt_source.cpp/.h  # OpenDTU Solar PV MQTT client
+│           └── espnow_pv_source.cpp/.h     # Sonoff POWCT ESP-NOW binary receiver
 ├── web_ui_source.html              # Uncompressed HTML/CSS/JS source for WebUI
 │
 ├── chint_ddsu666_reader/           # Clean Core Split RS-485 Master Reader (14.5 Hz)
