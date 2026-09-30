@@ -19,6 +19,8 @@ struct SystemSettings {
   String mqtt_pass      = MQTT_PASSWORD;
   String ota_password   = OTA_PASSWORD;
   uint8_t grid_priority = (uint8_t)DEFAULT_GRID_PRIORITY_MODE;
+  uint8_t pv_priority   = (uint8_t)DEFAULT_PV_PRIORITY_MODE;
+  String  filter_mode   = "damped"; // "damped" or "raw"
 };
 
 /**
@@ -33,6 +35,12 @@ public:
 
   void setGridPriority(uint8_t mode);
   uint8_t getGridPriority() const { return _settings.grid_priority; }
+
+  void setPvPriority(uint8_t mode);
+  uint8_t getPvPriority() const { return _settings.pv_priority; }
+
+  void setFilterMode(const String &mode);
+  const String& getFilterMode() const { return _settings.filter_mode; }
 
   bool save(const SystemSettings &newSettings);
   void serialize(JsonDocument &doc) const;

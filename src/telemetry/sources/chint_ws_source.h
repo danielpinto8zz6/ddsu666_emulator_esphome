@@ -26,6 +26,9 @@ public:
 
   bool isGridSource() const override { return true; }
 
+  const char* getHealthKey() const override { return "chint"; }
+  void populateHealth(JsonObject &obj) const override;
+
 private:
   String _ip;
   uint16_t _port;

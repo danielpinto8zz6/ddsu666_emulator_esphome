@@ -26,6 +26,9 @@ public:
 
   bool isPvSource() const override { return true; }
 
+  const char* getHealthKey() const override { return "opendtu"; }
+  void populateHealth(JsonObject &obj) const override;
+
 private:
   String _broker;
   uint16_t _port;

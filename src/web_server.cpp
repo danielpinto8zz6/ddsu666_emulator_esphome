@@ -18,7 +18,7 @@ static SafeWebServer s_server(80);
 
 static ModbusRTUServer  *s_modbus    = nullptr;
 static TelemetryManager *s_telemetry = nullptr;
-static char s_jsonBuffer[1024];
+static char s_jsonBuffer[2048];
 volatile bool g_isUpdatingFirmware = false;
 extern volatile UBaseType_t g_networkTaskStackHWM;  // set in main.cpp
 
@@ -29,18 +29,8 @@ static void handleHealthJson() {
   MeterTelemetry grid = MeterState::getGrid();
   MeterTelemetry pv   = MeterState::getPv();
 
-  ITelemetrySource *chintSrc   = s_telemetry ? s_telemetry->getSource("CHINT_WS") : nullptr;
-  ITelemetrySource *shellySrc  = s_telemetry ? s_telemetry->getSource("SHELLY_WS") : nullptr;
-  ITelemetrySource *opendtuSrc = s_telemetry ? s_telemetry->getSource("OPENDTU_MQTT") : nullptr;
-
   uint32_t now = millis();
-  float gridAge   = s_telemetry ? (now - s_telemetry->getLastGridMsgTime()) / 1000.0f : -1.0f;
-  float chintAge  = (chintSrc && chintSrc->getLastMessageTime() != 0) ? chintSrc->getAgeSeconds() : -1.0f;
-  float shellyAge = (shellySrc && shellySrc->getLastMessageTime() != 0) ? shellySrc->getAgeSeconds() : -1.0f;
-  float pvAge     = s_telemetry ? (now - s_telemetry->getLastPvMsgTime()) / 1000.0f : -1.0f;
-
-  bool gridSourceActive = (chintSrc && chintSrc->isRecent(CHINT_TIMEOUT_MS)) ||
-                          (shellySrc && shellySrc->isConnected());
+  bool gridSourceActive = s_telemetry && s_telemetry->isGridRecent(5000);
 
   bool healthy = s_telemetry && s_telemetry->isWiFiConnected() && 
                  gridSourceActive && 
@@ -48,7 +38,8 @@ static void handleHealthJson() {
 
   float gw = MeterState::getGridWatts();
   const char *flow = (gw > 5.0f) ? "IMPORT" : ((gw < -5.0f) ? "EXPORT" : "BALANCED");
-  const char *source = s_telemetry ? s_telemetry->getActiveGridSource() : "NONE";
+  const char *source   = s_telemetry ? s_telemetry->getActiveGridSource() : "NONE";
+  const char *pvSource = s_telemetry ? s_telemetry->getActivePvSource() : "NONE";
 
   uint32_t lastQueryTime = s_modbus ? s_modbus->getLastQueryTime() : 0;
   float modbusAge = (lastQueryTime != 0) ? (now - lastQueryTime) / 1000.0f : -1.0f;
@@ -59,9 +50,7 @@ static void handleHealthJson() {
   float modbusRate = s_modbus ? s_modbus->getQueryRateHz() : 0.0f;
   bool inverterConnected = s_modbus ? s_modbus->isInverterActive(2500) : false;
 
-  const SystemSettings &cfg = AppConfig::getInstance().get();
-
-  StaticJsonDocument<1280> doc;
+  StaticJsonDocument<1536> doc;
   doc["status"] = healthy ? "HEALTHY" : ((s_modbus && s_modbus->isEnabled()) ? "DEGRADED" : "FAILSAFE");
   doc["uptime_sec"] = (uint32_t)(millis() / 1000);
   doc["free_heap"] = (uint32_t)ESP.getFreeHeap();
@@ -70,24 +59,24 @@ static void handleHealthJson() {
   pri["mode"] = s_telemetry ? (uint8_t)s_telemetry->getGridPriority() : 0;
   pri["description"] = s_telemetry ? s_telemetry->getGridPriorityDescription() : "Unknown";
 
+  JsonObject pvPri = doc.createNestedObject("pv_priority");
+  pvPri["mode"] = s_telemetry ? (uint8_t)s_telemetry->getPvPriority() : 0;
+  pvPri["description"] = s_telemetry ? s_telemetry->getPvPriorityDescription() : "Unknown";
+
   JsonObject wifi = doc.createNestedObject("wifi");
   wifi["connected"] = s_telemetry ? s_telemetry->isWiFiConnected() : false;
   wifi["ip"] = WiFi.localIP().toString();
   wifi["rssi"] = WiFi.RSSI();
 
-  JsonObject chint = doc.createNestedObject("chint");
-  chint["ws_connected"] = chintSrc ? chintSrc->isConnected() : false;
-  chint["ip"] = cfg.chint_ip;
-  chint["age_sec"] = (chintAge >= 0) ? round1(chintAge) : -1.0f;
-
-  JsonObject shelly = doc.createNestedObject("shelly");
-  shelly["ws_connected"] = shellySrc ? shellySrc->isConnected() : false;
-  shelly["ip"] = cfg.shelly_ip;
-  shelly["age_sec"] = (shellyAge >= 0) ? round1(shellyAge) : -1.0f;
-
-  JsonObject opendtu = doc.createNestedObject("opendtu");
-  opendtu["mqtt_connected"] = opendtuSrc ? opendtuSrc->isConnected() : false;
-  opendtu["age_sec"] = round1(pvAge);
+  // Polymorphic Telemetry Source Diagnostics (OCP)
+  if (s_telemetry) {
+    for (const auto *src : s_telemetry->getSources()) {
+      if (src) {
+        JsonObject srcObj = doc.createNestedObject(src->getHealthKey());
+        src->populateHealth(srcObj);
+      }
+    }
+  }
 
   JsonObject modbus = doc.createNestedObject("modbus");
   modbus["rs485_active"] = s_modbus->isEnabled();
@@ -103,6 +92,7 @@ static void handleHealthJson() {
 
   JsonObject gridObj = doc.createNestedObject("grid");
   gridObj["source"] = source;
+  gridObj["filter"] = s_telemetry ? s_telemetry->getFilterMode() : "unknown";
   gridObj["watts"] = round1(gw);
   gridObj["flow"] = flow;
   gridObj["volts"] = round1(grid.voltage);
@@ -113,21 +103,24 @@ static void handleHealthJson() {
   gridObj["export_kwh"] = round2(grid.export_kwh);
 
   JsonObject pvObj = doc.createNestedObject("pv");
+  pvObj["source"] = pvSource;
   pvObj["watts"] = round1(MeterState::getPvWatts());
   pvObj["yield_kwh"] = round2(pv.import_kwh);
 
   // Source-transition event history (#5)
   JsonArray evArr = doc.createNestedArray("source_events");
-  uint8_t total = s_telemetry->getSourceEventCount();
-  uint8_t head  = s_telemetry->getSourceEventHead();
-  const SourceEvent *evs = s_telemetry->getSourceEvents();
+  uint8_t total = s_telemetry ? s_telemetry->getSourceEventCount() : 0;
+  uint8_t head  = s_telemetry ? s_telemetry->getSourceEventHead() : 0;
+  const SourceEvent *evs = s_telemetry ? s_telemetry->getSourceEvents() : nullptr;
   // Iterate oldest -> newest
-  for (uint8_t i = 0; i < total; i++) {
-    uint8_t idx = (head - total + i + SOURCE_EVENT_HISTORY) % SOURCE_EVENT_HISTORY;
-    JsonObject ev = evArr.createNestedObject();
-    ev["t"] = evs[idx].timestamp_s;
-    ev["from"] = evs[idx].from;
-    ev["to"]   = evs[idx].to;
+  if (evs) {
+    for (uint8_t i = 0; i < total; i++) {
+      uint8_t idx = (head - total + i + SOURCE_EVENT_HISTORY) % SOURCE_EVENT_HISTORY;
+      JsonObject ev = evArr.createNestedObject();
+      ev["t"] = evs[idx].timestamp_s;
+      ev["from"] = evs[idx].from;
+      ev["to"]   = evs[idx].to;
+    }
   }
 
   // Diagnostic: network task stack HWM (#4)
@@ -182,6 +175,42 @@ void initWebServer(ModbusRTUServer &modbus, TelemetryManager &telemetry) {
     if (s_telemetry) {
       s_server.sendHeader("Access-Control-Allow-Origin", "*");
       s_server.send(200, "application/json", "{\"mode\":" + String((uint8_t)s_telemetry->getGridPriority()) + ",\"desc\":\"" + s_telemetry->getGridPriorityDescription() + "\"}");
+      return;
+    }
+    s_server.send(400, "application/json", "{\"error\":\"Invalid request\"}");
+  });
+
+  s_server.on("/api/pv_priority", HTTP_ANY, []() {
+    if (s_server.hasArg("mode")) {
+      uint8_t mode = (uint8_t)s_server.arg("mode").toInt();
+      if (mode <= 3 && s_telemetry) {
+        s_telemetry->setPvPriority((PvPriorityMode)mode);
+        s_server.sendHeader("Access-Control-Allow-Origin", "*");
+        s_server.send(200, "application/json", "{\"status\":\"OK\",\"mode\":" + String(mode) + ",\"desc\":\"" + s_telemetry->getPvPriorityDescription() + "\"}");
+        return;
+      }
+    }
+    if (s_telemetry) {
+      s_server.sendHeader("Access-Control-Allow-Origin", "*");
+      s_server.send(200, "application/json", "{\"mode\":" + String((uint8_t)s_telemetry->getPvPriority()) + ",\"desc\":\"" + s_telemetry->getPvPriorityDescription() + "\"}");
+      return;
+    }
+    s_server.send(400, "application/json", "{\"error\":\"Invalid request\"}");
+  });
+
+  s_server.on("/api/filter", HTTP_ANY, []() {
+    if (s_server.hasArg("mode") && s_telemetry) {
+      String m = s_server.arg("mode");
+      if (m == "raw" || m == "damped") {
+        s_telemetry->setFilterMode(m);
+        s_server.sendHeader("Access-Control-Allow-Origin", "*");
+        s_server.send(200, "application/json", "{\"status\":\"OK\",\"mode\":\"" + m + "\"}");
+        return;
+      }
+    }
+    if (s_telemetry) {
+      s_server.sendHeader("Access-Control-Allow-Origin", "*");
+      s_server.send(200, "application/json", "{\"mode\":\"" + s_telemetry->getFilterMode() + "\",\"filtered_watts\":" + String(s_telemetry->getFilter().getFilteredWatts()) + "}");
       return;
     }
     s_server.send(400, "application/json", "{\"error\":\"Invalid request\"}");

@@ -5,6 +5,15 @@
 #include "../telemetry_source.h"
 
 /**
+ * @brief Packed wire format for Sonoff POWCT ESP-NOW telemetry packets.
+ */
+struct __attribute__((packed)) PowCtPacket {
+  uint8_t header;         // 0xD6 magic byte
+  float active_power_w;   // 4-byte IEEE float (Little Endian)
+  float yield_kwh;        // 4-byte IEEE float (Little Endian)
+};
+
+/**
  * @brief Telemetry source adapter for Sonoff POWCT PV stream over ESP-NOW.
  */
 class EspNowPvSource : public ITelemetrySource {
@@ -24,9 +33,15 @@ public:
 
   bool isPvSource() const override { return true; }
 
+  const char* getHealthKey() const override { return "espnow"; }
+  void populateHealth(JsonObject &obj) const override;
+
+  uint32_t getPacketsReceived() const { return _packetsReceived; }
+
 private:
   ITelemetrySink *_sink = nullptr;
-  uint32_t _lastMsgTime = 0;
+  volatile uint32_t _lastMsgTime = 0;
+  volatile uint32_t _packetsReceived = 0;
   static EspNowPvSource *s_instance;
   static void onDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len);
 };

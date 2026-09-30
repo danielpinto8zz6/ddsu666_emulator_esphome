@@ -81,6 +81,16 @@ enum GridPriorityMode : uint8_t {
 
 #define DEFAULT_GRID_PRIORITY_MODE        GRID_PRI_CHINT_SHELLY
 
+// PV Solar Generation Source Priority Modes:
+enum PvPriorityMode : uint8_t {
+  PV_PRI_OPENDTU_ESPNOW = 0, // Auto: OpenDTU MQTT -> Sonoff POWCT ESP-NOW fallback
+  PV_PRI_ESPNOW_OPENDTU = 1, // Auto: Sonoff POWCT ESP-NOW -> OpenDTU MQTT fallback
+  PV_PRI_OPENDTU_ONLY   = 2, // OpenDTU MQTT Only
+  PV_PRI_ESPNOW_ONLY    = 3  // Sonoff POWCT ESP-NOW Only
+};
+
+#define DEFAULT_PV_PRIORITY_MODE          PV_PRI_OPENDTU_ESPNOW
+
 // Web OTA Authentication Password (empty = disabled / no password)
 #ifndef OTA_PASSWORD
 #define OTA_PASSWORD                      ""

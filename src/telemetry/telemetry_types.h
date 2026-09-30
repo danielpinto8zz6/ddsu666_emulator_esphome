@@ -45,3 +45,4 @@ struct SourceEvent {
   char to[16];
 };
 constexpr uint8_t SOURCE_EVENT_HISTORY = 5;
+

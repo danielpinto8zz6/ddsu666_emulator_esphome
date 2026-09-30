@@ -87,3 +87,10 @@ void OpenDtuMqttSource::onMessage(char *topic, uint8_t *payload, unsigned int le
     }
   }
 }
+
+void OpenDtuMqttSource::populateHealth(JsonObject &obj) const {
+  obj["mqtt_connected"] = isConnected();
+  float age = getAgeSeconds();
+  obj["age_sec"] = (age >= 0.0f) ? std::round(age * 10.0f) / 10.0f : -1.0f;
+}
+

@@ -11,6 +11,8 @@
 #include "telemetry/sources/shelly_ws_source.h"
 #include "telemetry/sources/opendtu_mqtt_source.h"
 #include "telemetry/sources/espnow_pv_source.h"
+#include "telemetry/grid_arbitrator.h"
+#include "telemetry/pv_arbitrator.h"
 #include "web_server.h"
 
 #define WDT_TIMEOUT_SECONDS 15
@@ -20,7 +22,8 @@ static MeterStateDataProvider s_meterDataProvider;
 static ModbusRTUServer        s_modbusServer(&s_meterDataProvider);
 static GridFilter             s_gridFilter;
 static DefaultGridArbitrator  s_gridArbitrator;
-static TelemetryManager       s_telemetryManager(s_modbusServer, &s_gridFilter, &s_gridArbitrator);
+static DefaultPvArbitrator    s_pvArbitrator;
+static TelemetryManager       s_telemetryManager(s_modbusServer, &s_gridFilter, &s_gridArbitrator, &s_pvArbitrator);
 
 // Pluggable Technology Drivers (Instantiated in Composition Root)
 static ChintWsSource          s_chintSource;

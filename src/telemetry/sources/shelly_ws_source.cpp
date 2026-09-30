@@ -142,3 +142,11 @@ void ShellyWsSource::handleMessage(const uint8_t *payload, size_t length) {
     }
   }
 }
+
+void ShellyWsSource::populateHealth(JsonObject &obj) const {
+  obj["ws_connected"] = _connected;
+  obj["ip"] = _ip;
+  float age = getAgeSeconds();
+  obj["age_sec"] = (age >= 0.0f) ? std::round(age * 10.0f) / 10.0f : -1.0f;
+}
+

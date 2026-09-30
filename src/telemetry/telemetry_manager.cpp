@@ -4,19 +4,38 @@
 
 TelemetryManager::TelemetryManager(ModbusRTUServer &modbusServer,
                                    IPowerFilter *filter,
-                                   IGridArbitrator *arbitrator)
+                                   IGridArbitrator *gridArbitrator,
+                                   IPvArbitrator *pvArbitrator)
   : _modbusServer(modbusServer),
-    _filter(filter ? filter : &_defaultFilter),
-    _arbitrator(arbitrator ? arbitrator : &_defaultArbitrator) {
+    _filter(filter ? filter : &_dampedFilter),
+    _gridArbitrator(gridArbitrator ? gridArbitrator : &_defaultGridArbitrator),
+    _pvArbitrator(pvArbitrator ? pvArbitrator : &_defaultPvArbitrator) {
   strncpy(_lastKnownSource, "NONE", sizeof(_lastKnownSource));
+  strncpy(_lastKnownPvSource, "NONE", sizeof(_lastKnownPvSource));
 }
 
 void TelemetryManager::setFilter(IPowerFilter *filter) {
-  _filter = filter ? filter : &_defaultFilter;
+  _filter = filter ? filter : &_dampedFilter;
 }
 
-void TelemetryManager::setArbitrator(IGridArbitrator *arbitrator) {
-  _arbitrator = arbitrator ? arbitrator : &_defaultArbitrator;
+void TelemetryManager::setFilterMode(const String &mode) {
+  if (mode == "raw") {
+    _filter = &_passThroughFilter;
+    _currentFilterMode = "raw";
+  } else {
+    _filter = &_dampedFilter;
+    _currentFilterMode = "damped";
+  }
+  AppConfig::getInstance().setFilterMode(_currentFilterMode);
+  Serial.printf("[Filter] Power Filter mode set to %s\n", _currentFilterMode.c_str());
+}
+
+void TelemetryManager::setGridArbitrator(IGridArbitrator *arbitrator) {
+  _gridArbitrator = arbitrator ? arbitrator : &_defaultGridArbitrator;
+}
+
+void TelemetryManager::setPvArbitrator(IPvArbitrator *arbitrator) {
+  _pvArbitrator = arbitrator ? arbitrator : &_defaultPvArbitrator;
 }
 
 void TelemetryManager::registerSource(ITelemetrySource *source) {
@@ -39,7 +58,9 @@ void TelemetryManager::begin() {
   AppConfig &cfg = AppConfig::getInstance();
   cfg.begin();
 
-  _arbitrator->setMode((GridPriorityMode)cfg.getGridPriority());
+  _gridArbitrator->setMode((GridPriorityMode)cfg.getGridPriority());
+  _pvArbitrator->setMode((PvPriorityMode)cfg.getPvPriority());
+  setFilterMode(cfg.getFilterMode());
 
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
@@ -94,25 +115,47 @@ void TelemetryManager::loop() {
 }
 
 void TelemetryManager::setGridPriority(GridPriorityMode mode) {
-  _arbitrator->setMode(mode);
+  _gridArbitrator->setMode(mode);
   AppConfig::getInstance().setGridPriority((uint8_t)mode);
   Serial.printf("[Priority] Grid Priority Mode set to %u: %s\n", (unsigned)mode, getGridPriorityDescription());
 }
 
 GridPriorityMode TelemetryManager::getGridPriority() const {
-  return _arbitrator->getMode();
+  return _gridArbitrator->getMode();
 }
 
 const char* TelemetryManager::getGridPriorityDescription() const {
-  return _arbitrator->getDescription();
+  return _gridArbitrator->getDescription();
 }
 
 const char* TelemetryManager::getActiveGridSource() const {
-  return _arbitrator->getActiveSource(_sources);
+  return _gridArbitrator->getActiveSource(_sources);
 }
 
 bool TelemetryManager::canSourceUpdateGrid(const char *sourceId) const {
-  return _arbitrator->canUpdate(sourceId, _sources);
+  return _gridArbitrator->canUpdate(sourceId, _sources);
+}
+
+void TelemetryManager::setPvPriority(PvPriorityMode mode) {
+  _pvArbitrator->setMode(mode);
+  AppConfig::getInstance().setPvPriority((uint8_t)mode);
+  Serial.printf("[Priority] PV Priority Mode set to %u: %s\n", (unsigned)mode, getPvPriorityDescription());
+}
+
+PvPriorityMode TelemetryManager::getPvPriority() const {
+  return _pvArbitrator->getMode();
+}
+
+const char* TelemetryManager::getPvPriorityDescription() const {
+  return _pvArbitrator->getDescription();
+}
+
+const char* TelemetryManager::getActivePvSource() const {
+  return _pvArbitrator->getActiveSource(_sources);
+}
+
+bool TelemetryManager::canSourceUpdatePv(const char *sourceId) const {
+  return _pvArbitrator->canUpdate(sourceId, _sources);
 }
 
 void TelemetryManager::reportGridMeasurement(const char *sourceId, const GridMeasurement &meas) {
@@ -193,6 +236,10 @@ void TelemetryManager::reportGridMeasurement(const char *sourceId, const GridMea
 }
 
 void TelemetryManager::reportPvMeasurement(const char *sourceId, const PvMeasurement &meas) {
+  if (!canSourceUpdatePv(sourceId)) {
+    return;
+  }
+
   if (meas.isValid()) {
     if (!std::isnan(meas.active_power_w)) {
       MeterState::updatePvPower(meas.active_power_w);
@@ -215,7 +262,7 @@ void TelemetryManager::checkWatchdogs() {
     _gridWatchdogTriggered = true;
   }
 
-  // PV Watchdog (10s timeout)
+  // PV Watchdog (15s timeout)
   if (!_pvWatchdogTriggered && (now - _lastPvMsgTime > (WATCHDOG_TIMEOUT_SEC * 1000))) {
     Serial.println("[FAILSAFE] PV data timeout! Zeroing PV power.");
     MeterState::zeroPvPower();
@@ -224,6 +271,7 @@ void TelemetryManager::checkWatchdogs() {
 }
 
 void TelemetryManager::checkSourceTransition() {
+  // 1. Grid Source Transition
   const char *current = getActiveGridSource();
   if (strcmp(current, _lastKnownSource) != 0) {
     Serial.printf("[Source] Grid source changed: %s -> %s\n", _lastKnownSource, current);
@@ -240,5 +288,13 @@ void TelemetryManager::checkSourceTransition() {
 
     // Reset filter on source handoff so new source starts fresh immediately
     _filter->reset();
+  }
+
+  // 2. PV Source Transition
+  const char *currPv = getActivePvSource();
+  if (strcmp(currPv, _lastKnownPvSource) != 0) {
+    Serial.printf("[Source] PV source changed: %s -> %s\n", _lastKnownPvSource, currPv);
+    strncpy(_lastKnownPvSource, currPv, sizeof(_lastKnownPvSource) - 1);
+    _lastKnownPvSource[sizeof(_lastKnownPvSource) - 1] = '\0';
   }
 }

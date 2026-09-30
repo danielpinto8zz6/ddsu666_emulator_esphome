@@ -23,19 +23,26 @@ void EspNowPvSource::begin(ITelemetrySink *sink) {
 }
 
 void EspNowPvSource::handlePacket(const uint8_t *data, int len) {
-  if (len == 9 && data && data[0] == 0xD6) {
-    float watts = 0.0f;
-    float yield_kwh = 0.0f;
-    memcpy(&watts, data + 1, 4);
-    memcpy(&yield_kwh, data + 5, 4);
+  if (len == (int)sizeof(PowCtPacket) && data && data[0] == 0xD6) {
+    const PowCtPacket *pkt = reinterpret_cast<const PowCtPacket*>(data);
 
     PvMeasurement meas;
-    meas.active_power_w = watts;
-    meas.yield_kwh = yield_kwh;
+    meas.active_power_w = pkt->active_power_w;
+    meas.yield_kwh      = pkt->yield_kwh;
 
     _lastMsgTime = millis();
+    _packetsReceived++;
+
     if (_sink && meas.isValid()) {
       _sink->reportPvMeasurement(getId(), meas);
     }
   }
 }
+
+void EspNowPvSource::populateHealth(JsonObject &obj) const {
+  obj["connected"] = isConnected();
+  float age = getAgeSeconds();
+  obj["age_sec"] = (age >= 0.0f) ? std::round(age * 10.0f) / 10.0f : -1.0f;
+  obj["packets_rx"] = (uint32_t)_packetsReceived;
+}
+

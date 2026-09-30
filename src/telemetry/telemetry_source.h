@@ -1,5 +1,6 @@
 #pragma once
 
+#include <ArduinoJson.h>
 #include "telemetry_types.h"
 
 class ITelemetrySink;
@@ -66,6 +67,16 @@ public:
    * @brief Whether this source produces PV solar generation measurements.
    */
   virtual bool isPvSource() const { return false; }
+
+  /**
+   * @brief Key under which this source is serialized in the /health JSON document (e.g., "chint", "shelly").
+   */
+  virtual const char* getHealthKey() const = 0;
+
+  /**
+   * @brief Polymorphic diagnostics serialization for /health API.
+   */
+  virtual void populateHealth(JsonObject &obj) const = 0;
 };
 
 /**

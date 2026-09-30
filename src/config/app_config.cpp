@@ -1,4 +1,10 @@
 #include "app_config.h"
+#include <IPAddress.h>
+
+static bool isValidIpAddress(const String &str) {
+  IPAddress ip;
+  return ip.fromString(str);
+}
 
 AppConfig& AppConfig::getInstance() {
   static AppConfig instance;
@@ -18,6 +24,8 @@ void AppConfig::begin() {
     _settings.mqtt_pass     = prefs.getString("mqtt_pass",  MQTT_PASSWORD);
     _settings.ota_password  = prefs.getString("ota_pass",   OTA_PASSWORD);
     _settings.grid_priority = prefs.getUChar("grid_pri",    (uint8_t)DEFAULT_GRID_PRIORITY_MODE);
+    _settings.pv_priority   = prefs.getUChar("pv_pri",      (uint8_t)DEFAULT_PV_PRIORITY_MODE);
+    _settings.filter_mode   = prefs.getString("filt_mode",  "damped");
     prefs.end();
   }
 }
@@ -27,6 +35,24 @@ void AppConfig::setGridPriority(uint8_t mode) {
   Preferences prefs;
   if (prefs.begin(PREFS_NAMESPACE, false)) {
     prefs.putUChar("grid_pri", mode);
+    prefs.end();
+  }
+}
+
+void AppConfig::setPvPriority(uint8_t mode) {
+  _settings.pv_priority = mode;
+  Preferences prefs;
+  if (prefs.begin(PREFS_NAMESPACE, false)) {
+    prefs.putUChar("pv_pri", mode);
+    prefs.end();
+  }
+}
+
+void AppConfig::setFilterMode(const String &mode) {
+  _settings.filter_mode = mode;
+  Preferences prefs;
+  if (prefs.begin(PREFS_NAMESPACE, false)) {
+    prefs.putString("filt_mode", mode);
     prefs.end();
   }
 }
@@ -51,19 +77,21 @@ bool AppConfig::save(const SystemSettings &newSettings) {
     changed = true;
   }
 
-  if (newSettings.chint_ip.length() >= 7 && newSettings.chint_ip != _settings.chint_ip) {
+  // Type-safe IPv4 validation for Chint and Shelly target IP addresses
+  if (isValidIpAddress(newSettings.chint_ip) && newSettings.chint_ip != _settings.chint_ip) {
     prefs.putString("chint_ip", newSettings.chint_ip);
     _settings.chint_ip = newSettings.chint_ip;
     changed = true;
   }
 
-  if (newSettings.shelly_ip.length() >= 7 && newSettings.shelly_ip != _settings.shelly_ip) {
+  if (isValidIpAddress(newSettings.shelly_ip) && newSettings.shelly_ip != _settings.shelly_ip) {
     prefs.putString("shelly_ip", newSettings.shelly_ip);
     _settings.shelly_ip = newSettings.shelly_ip;
     changed = true;
   }
 
-  if (newSettings.mqtt_broker.length() >= 7 && newSettings.mqtt_broker != _settings.mqtt_broker) {
+  // MQTT broker can be an IP address or hostname
+  if (newSettings.mqtt_broker.length() >= 3 && newSettings.mqtt_broker != _settings.mqtt_broker) {
     prefs.putString("mqtt_broker", newSettings.mqtt_broker);
     _settings.mqtt_broker = newSettings.mqtt_broker;
     changed = true;
@@ -93,6 +121,12 @@ bool AppConfig::save(const SystemSettings &newSettings) {
     changed = true;
   }
 
+  if (newSettings.filter_mode != _settings.filter_mode) {
+    prefs.putString("filt_mode", newSettings.filter_mode);
+    _settings.filter_mode = newSettings.filter_mode;
+    changed = true;
+  }
+
   prefs.end();
   return changed;
 }
@@ -107,4 +141,6 @@ void AppConfig::serialize(JsonDocument &doc) const {
   doc["mqtt_user"]     = _settings.mqtt_user;
   doc["mqtt_pass_set"] = (_settings.mqtt_pass.length() > 0);
   doc["ota_password"]  = _settings.ota_password;
+  doc["filter_mode"]   = _settings.filter_mode;
 }
+

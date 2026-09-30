@@ -7,6 +7,7 @@
 #include "telemetry_source.h"
 #include "grid_filter.h"
 #include "grid_arbitrator.h"
+#include "pv_arbitrator.h"
 #include "modbus_rtu.h"
 #include "meter_data.h"
 #include "../config/app_config.h"
@@ -15,20 +16,27 @@
  * @brief Central Telemetry Manager & Ingestion Hub (SOLID: Open/Closed & Dependency Inversion).
  *
  * Implements ITelemetrySink to receive normalized measurements from any registered
- * ITelemetrySource provider, coordinates priority arbitration via IGridArbitrator,
+ * ITelemetrySource provider, coordinates priority arbitration via IGridArbitrator & IPvArbitrator,
  * applies power smoothing via IPowerFilter, and updates the thread-safe Modbus MeterState.
  */
 class TelemetryManager : public ITelemetrySink {
 public:
   TelemetryManager(ModbusRTUServer &modbusServer,
                    IPowerFilter *filter = nullptr,
-                   IGridArbitrator *arbitrator = nullptr);
+                   IGridArbitrator *gridArbitrator = nullptr,
+                   IPvArbitrator *pvArbitrator = nullptr);
 
   // Strategy Injection (DIP / OCP)
   void setFilter(IPowerFilter *filter);
-  void setArbitrator(IGridArbitrator *arbitrator);
+  void setFilterMode(const String &mode);
+  const String& getFilterMode() const { return _currentFilterMode; }
   IPowerFilter& getFilter() { return *_filter; }
-  IGridArbitrator& getArbitrator() { return *_arbitrator; }
+
+  void setGridArbitrator(IGridArbitrator *arbitrator);
+  IGridArbitrator& getGridArbitrator() { return *_gridArbitrator; }
+
+  void setPvArbitrator(IPvArbitrator *arbitrator);
+  IPvArbitrator& getPvArbitrator() { return *_pvArbitrator; }
 
   // Source Registration (Dependency Injection / OCP)
   void registerSource(ITelemetrySource *source);
@@ -51,11 +59,19 @@ public:
   const char* getGridPriorityDescription() const;
   const char* getActiveGridSource() const;
 
+  void setPvPriority(PvPriorityMode mode);
+  PvPriorityMode getPvPriority() const;
+  const char* getPvPriorityDescription() const;
+  const char* getActivePvSource() const;
+
   // Freshness & Diagnostics
   uint32_t getLastGridMsgTime() const { return _lastGridMsgTime; }
   uint32_t getLastPvMsgTime() const { return _lastPvMsgTime; }
   bool isGridRecent(uint32_t timeoutMs = 4000) const {
     return (_lastGridMsgTime != 0) && (millis() - _lastGridMsgTime <= timeoutMs);
+  }
+  bool isPvRecent(uint32_t timeoutMs = 15000) const {
+    return (_lastPvMsgTime != 0) && (millis() - _lastPvMsgTime <= timeoutMs);
   }
 
   // Source transition history (for WebUI)
@@ -69,11 +85,16 @@ private:
 
   // Signal Conditioning Filter Strategy
   IPowerFilter *_filter;
-  GridFilter _defaultFilter;
+  GridFilter _dampedFilter;
+  PassThroughFilter _passThroughFilter;
+  String _currentFilterMode = "damped";
 
-  // Priority Arbitration Strategy
-  IGridArbitrator *_arbitrator;
-  DefaultGridArbitrator _defaultArbitrator;
+  // Priority Arbitration Strategies
+  IGridArbitrator *_gridArbitrator;
+  DefaultGridArbitrator _defaultGridArbitrator;
+
+  IPvArbitrator *_pvArbitrator;
+  DefaultPvArbitrator _defaultPvArbitrator;
 
   // State Timers & Failsafes
   uint32_t _lastGridMsgTime = 0;
@@ -86,9 +107,11 @@ private:
   uint8_t _sourceEventHead = 0;
   uint8_t _sourceEventCount = 0;
   char _lastKnownSource[16];
+  char _lastKnownPvSource[16];
 
   void connectWiFi();
   void checkWatchdogs();
   void checkSourceTransition();
   bool canSourceUpdateGrid(const char *sourceId) const;
+  bool canSourceUpdatePv(const char *sourceId) const;
 };

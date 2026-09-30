@@ -26,6 +26,9 @@ public:
 
   bool isGridSource() const override { return true; }
 
+  const char* getHealthKey() const override { return "shelly"; }
+  void populateHealth(JsonObject &obj) const override;
+
   /**
    * @brief Enable periodic polling for energy counters (used during fallback when Chint is offline).
    */
