@@ -411,11 +411,14 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             this.connState = 'paused';
           }
 
-          window.addEventListener("beforeunload", () => {
+          const cleanupSocket = () => {
             if (this.ws) {
-              try { this.ws.close(1000, "tab closed"); } catch(e) {}
+              try { this.ws.close(1000, "page closed"); } catch(e) {}
+              this.ws = null;
             }
-          });
+          };
+          window.addEventListener("pagehide", cleanupSocket);
+          window.addEventListener("beforeunload", cleanupSocket);
 
           document.addEventListener("visibilitychange", () => {
             if (!this.liveMode) return;
