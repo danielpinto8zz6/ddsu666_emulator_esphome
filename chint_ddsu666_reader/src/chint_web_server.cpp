@@ -10,9 +10,9 @@ void ChintWebServer::begin() {
   const char *headerkeys[] = {"X-OTA-Password", "Authorization"};
   _server.collectHeaders(headerkeys, 2);
 
-  _server.on("/", HTTP_GET, [this]() { handleRoot(); });
-  _server.on("/health", HTTP_GET, [this]() { handleHealthJson(); });
-  _server.on("/status", HTTP_GET, [this]() { handleHealthJson(); });
+  _server.on("/", HTTP_ANY, [this]() { handleRoot(); });
+  _server.on("/health", HTTP_ANY, [this]() { handleHealthJson(); });
+  _server.on("/status", HTTP_ANY, [this]() { handleHealthJson(); });
 
   _server.on("/api/settings", HTTP_ANY, [this]() { handleSettingsApi(); });
   _server.on("/set_slave", HTTP_ANY, [this]() { handleSettingsApi(); });

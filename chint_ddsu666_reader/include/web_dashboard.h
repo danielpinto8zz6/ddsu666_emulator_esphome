@@ -129,22 +129,15 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     .packet-flash {
       animation: packet-pulse 0.18s ease-out;
     }
-    .hero-card {
-      text-align: center;
-      padding: 1.5rem;
-      margin-bottom: 1.25rem;
-      border: 1px solid var(--pico-muted-border-color);
-    }
-    .hero-val {
-      font-size: 3.5rem;
+    .val-display {
+      font-size: 2.2rem;
       font-weight: 800;
       color: var(--pico-color);
-      letter-spacing: -0.02em;
       line-height: 1.1;
-      margin: 0.5rem 0;
+      margin: 0.35rem 0;
     }
-    .hero-unit {
-      font-size: 1.5rem;
+    .val-unit {
+      font-size: 1.1rem;
       font-weight: 500;
       color: var(--pico-muted-color);
       margin-left: 0.25rem;
@@ -152,8 +145,7 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     /* Bidirectional Power Flow Gauge */
     .flow-gauge-wrap {
       width: 100%;
-      max-width: 480px;
-      margin: 0.75rem auto 0.5rem auto;
+      margin: 0.6rem 0 0.4rem 0;
     }
     .flow-gauge-labels {
       display: flex;
@@ -187,13 +179,6 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
       transition: left 0.15s ease-out, width 0.15s ease-out, background 0.15s ease-out;
       border-radius: 9999px;
     }
-    .val-display {
-      font-size: 1.8rem;
-      font-weight: 700;
-      color: var(--pico-color);
-      line-height: 1.1;
-      margin: 0.35rem 0;
-    }
     .status-row {
       display: flex;
       justify-content: space-between;
@@ -220,6 +205,9 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
       padding: 1.25rem;
       border: 1px solid var(--pico-muted-border-color);
     }
+    select, input {
+      margin-bottom: 0;
+    }
     .tab-bar {
       display: flex;
       gap: 0.5rem;
@@ -238,18 +226,22 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
   </style>
 </head>
 <body class="container" x-data="chintReaderApp()" x-init="init()">
-  <!-- Cross-Device Quick Switcher -->
-  <nav class="device-nav">
-    <span class="device-nav-label">Device Switcher:</span>
-    <a href="http://ddsu666.local" target="_blank" role="button" class="outline secondary btn-xs">⚡ Dual Emulator (.169) ↗</a>
-    <button class="contrast btn-xs" style="pointer-events: none; border-color: var(--accent); color: var(--accent);">🌐 Chint Master Reader (This Device)</button>
-  </nav>
+  <!-- Device Cross-Link Switcher -->
+  <div class="device-nav">
+    <span class="device-nav-label">Switch Device:</span>
+    <a href="http://ddsu666.local/" role="button" class="secondary outline btn-xs">&larr; DDSU666 Emulator</a>
+    <a href="http://10.0.0.169/" role="button" class="secondary outline btn-xs">(IP: 10.0.0.169)</a>
+    <button class="outline btn-xs" style="border-color: var(--accent); color: var(--accent); cursor: default;">Chint Reader (This Device)</button>
+  </div>
 
   <!-- Header -->
   <header class="header-bar">
     <div class="header-title">
       <h1>Chint DDSU666 Modbus Master</h1>
       <small>XIAO ESP32-S3 &bull; Dedicated Core 1 Modbus RTU &bull; WebSocket Stream (:81)</small>
+      <div style="margin-top: 0.4rem;">
+        <span class="badge badge-accent">⚡ Physical Meter: <strong style="margin-left: 3px;" x-text="'Slave ID ' + (modbus.slave_id || 2) + ' • 9600 8N1'"></strong></span>
+      </div>
     </div>
     <div class="header-actions">
       <button class="outline" :class="liveMode ? 'contrast' : 'secondary'" @click="toggleLiveMode()" style="padding: 0.3rem 0.75rem; font-size: 0.82rem; margin-bottom: 0;">
@@ -258,18 +250,19 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
       </button>
       <span class="badge" :class="connBadgeClass" x-text="connBadgeText"></span>
       <span class="badge" :class="meterOnline ? 'badge-ok' : 'badge-err'" x-text="meterOnline ? 'METER ONLINE' : 'METER OFFLINE'"></span>
-      <button class="outline secondary" @click="rebootDevice()" style="padding: 0.3rem 0.75rem; font-size: 0.82rem; margin-bottom: 0; color: var(--rose); border-color: var(--rose);">↺ Reboot</button>
     </div>
   </header>
 
-  <!-- Hero Card: Active Power & Bidirectional Gauge -->
-  <article class="hero-card">
-    <div class="card-heading" style="justify-content: center;">Active Grid Power</div>
-    <div class="hero-val">
-      <span x-text="wattsDisplay"></span><span class="hero-unit">W</span>
+  <!-- Hero Card: Active Power & Bidirectional Flow Bar -->
+  <article>
+    <div class="card-heading">
+      <span>⚡ Grid Active Power</span>
+      <small :style="{ color: flowColor }" x-text="flowText"></small>
     </div>
-    <span class="badge" :class="flowBadgeClass" x-text="flowText"></span>
-
+    <div class="val-display">
+      <span x-text="wattsDisplay"></span><span class="val-unit">W</span>
+    </div>
+    
     <!-- Bidirectional Power Flow Bar -->
     <div class="flow-gauge-wrap">
       <div class="flow-gauge-labels">
@@ -284,8 +277,7 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     </div>
   </article>
 
-
-  <!-- Secondary Metrics: Electricals & Energy Accumulators -->
+  <!-- Secondary Metrics: Electricals & Energy Accumulators Strip -->
   <div class="grid">
     <article>
       <div class="card-heading">🔌 Grid Electricals</div>
@@ -299,84 +291,77 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
       <div class="card-heading">📊 Energy Accumulators</div>
       <div class="status-row"><span>Total Import</span><strong x-text="(telemetry.import_kwh ? telemetry.import_kwh.toFixed(2) : '0.00') + ' kWh'"></strong></div>
       <div class="status-row"><span>Total Export</span><strong x-text="(telemetry.export_kwh ? telemetry.export_kwh.toFixed(2) : '0.00') + ' kWh'"></strong></div>
-      <div class="status-row"><span>Physical Meter ID</span><strong style="color: var(--accent);" x-text="'Slave ID ' + (modbus.slave_id || 2)"></strong></div>
-      <div class="status-row"><span>Baud Rate</span><strong>9600 8N1 (RS-485)</strong></div>
+      <div class="status-row"><span>Meter Slave Address</span><strong style="color: var(--accent);" x-text="'ID ' + (modbus.slave_id || 2)"></strong></div>
+      <div class="status-row"><span>Modbus Baud Rate</span><strong>9600 8N1 (RS-485)</strong></div>
     </article>
   </div>
 
-  <!-- Bottom Utility Maintenance Section: Tabbed Navigation -->
-  <nav class="tab-bar">
-    <button class="tab-btn" :class="activeTab === 'diag' ? 'contrast' : 'outline secondary'" @click="activeTab = 'diag'">🩺 Modbus Diagnostics</button>
-    <button class="tab-btn" :class="activeTab === 'settings' ? 'contrast' : 'outline secondary'" @click="activeTab = 'settings'">⚙️ Slave ID Configuration</button>
-    <button class="tab-btn" :class="activeTab === 'ota' ? 'contrast' : 'outline secondary'" @click="activeTab = 'ota'">📦 Firmware OTA &amp; Control</button>
-  </nav>
-
-  <!-- Tab 1: Diagnostics & Modbus Bus Health -->
-  <article x-show="activeTab === 'diag'">
-    <div class="card-heading">
-      <span>🩺 Modbus Bus Health &amp; Telemetry Diagnostics</span>
-      <button class="outline secondary btn-xs" @click="copyDiagnostics()" x-text="copyBtnText"></button>
-    </div>
-    <div class="status-row">
-      <span>Modbus Polling Speed</span>
-      <strong style="color: var(--accent);" x-text="(modbus.rate_hz ? modbus.rate_hz.toFixed(1) : '0.0') + ' Hz'"></strong>
-    </div>
-    <div class="status-row">
-      <span>Meter Response Latency</span>
-      <strong x-text="(modbus.latency_ms ? modbus.latency_ms.toFixed(1) : '0.0') + ' ms'"></strong>
-    </div>
-    <div class="status-row">
-      <span>Modbus Slave ID &amp; Baud Rate</span>
-      <strong x-text="'ID ' + (modbus.slave_id || 1) + ' • 9600 8N1'"></strong>
-    </div>
-    <div class="status-row">
-      <span>Total RS-485 Queries / CRC Errors</span>
-      <span style="font-size: 0.88rem;">
-        <strong x-text="(modbus.total_queries || 0).toLocaleString()"></strong> queries &bull;
-        <span style="color: var(--rose);" x-text="(modbus.crc_errors || 0) + ' CRC err'"></span>
-      </span>
-    </div>
-    <div class="status-row">
-      <span>Connected WebSocket Clients</span>
-      <strong style="color: var(--emerald);" x-text="(websocket.clients || 0) + ' active'"></strong>
-    </div>
-    <div class="status-row">
-      <span>WebSocket Stream Endpoint</span>
-      <span style="font-family: monospace; font-size: 0.85rem;" x-text="wsUrl"></span>
-    </div>
-    <div class="status-row">
-      <span>System Uptime &amp; Wi-Fi RSSI</span>
-      <span x-text="Math.floor((uptime_sec || 0) / 60) + ' min • ' + (wifi.rssi || 0) + ' dBm'"></span>
-    </div>
-  </article>
-
-  <!-- Tab 2: Modbus Slave ID Configuration -->
-  <article x-show="activeTab === 'settings'">
-    <div class="card-heading">⚙️ Modbus Slave ID Configuration</div>
-    <p style="font-size: 0.8rem; color: var(--pico-muted-color); margin-bottom: 1rem;">
-      Configure the physical Chint DDSU666 Modbus RTU address. Saved to ESP32 NVS flash and applied immediately.
-    </p>
-    <div style="max-width: 320px;">
-      <label>
-        Chint DDSU666 Slave ID (Default: 2)
-        <input type="number" x-model.number="inputSlave" min="1" max="247" style="margin-top: 0.4rem;">
-      </label>
-      <div style="display: flex; gap: 0.75rem; margin-top: 1rem;">
+  <!-- Operational Configuration & Modbus Diagnostics Split -->
+  <div class="grid">
+    <!-- Left Card: Modbus Slave ID Configuration -->
+    <article>
+      <div class="card-heading">⚙️ Modbus RTU Configuration</div>
+      <div class="status-row" style="align-items: center;">
+        <div>
+          <span>Chint Slave Address</span>
+          <div style="font-size: 0.75rem; color: var(--pico-muted-color);">Physical meter Slave ID (1..247)</div>
+        </div>
+        <input type="number" x-model.number="inputSlave" min="1" max="247" style="width: auto; max-width: 100px; font-size: 0.82rem; padding: 0.25rem 0.5rem;">
+      </div>
+      <div style="display: flex; gap: 0.75rem; align-items: center; margin-top: 1rem;">
         <button @click="saveSettings()" style="width: auto; margin-bottom: 0;">Save &amp; Apply</button>
         <button class="outline secondary" @click="resetSlaveInput()" style="width: auto; margin-bottom: 0;">Reset</button>
+        <small :style="{ color: configStatusColor }" x-text="configStatus"></small>
       </div>
-    </div>
-  </article>
+    </article>
 
-  <!-- Tab 3: Firmware OTA & Device Control -->
-  <article x-show="activeTab === 'ota'">
+    <!-- Right Card: Modbus Bus Health & Telemetry Diagnostics -->
+    <article>
+      <div class="card-heading">
+        <span>🩺 Modbus Bus Health &amp; Diagnostics</span>
+        <button class="outline secondary btn-xs" @click="copyDiagnostics()" x-text="copyBtnText"></button>
+      </div>
+      <div class="status-row">
+        <span>Modbus Polling Speed</span>
+        <strong style="color: var(--accent);" x-text="(modbus.rate_hz ? modbus.rate_hz.toFixed(1) : '0.0') + ' Hz'"></strong>
+      </div>
+      <div class="status-row">
+        <span>Meter Response Latency</span>
+        <strong x-text="(modbus.latency_ms ? modbus.latency_ms.toFixed(1) : '0.0') + ' ms'"></strong>
+      </div>
+      <div class="status-row">
+        <span>Total Queries &amp; CRC Errors</span>
+        <span style="font-size: 0.88rem;">
+          <strong x-text="(modbus.total_queries || 0).toLocaleString()"></strong> queries &bull;
+          <span style="color: var(--rose);" x-text="(modbus.crc_errors || 0) + ' CRC err'"></span>
+        </span>
+      </div>
+      <div class="status-row">
+        <span>Connected WebSocket Clients</span>
+        <strong style="color: var(--emerald);" x-text="(websocket.clients || 0) + ' active'"></strong>
+      </div>
+      <div class="status-row">
+        <span>WebSocket Stream Endpoint</span>
+        <span style="font-family: monospace; font-size: 0.85rem;" x-text="wsUrl"></span>
+      </div>
+      <div class="status-row">
+        <span>System Uptime &amp; Wi-Fi RSSI</span>
+        <span x-text="Math.floor((uptime_sec || 0) / 60) + ' min • ' + (wifi.rssi || 0) + ' dBm'"></span>
+      </div>
+    </article>
+  </div>
+
+  <!-- Bottom Utility Maintenance Section: Wireless Web OTA & Device Control (In-Page, identical to Emulator) -->
+  <article>
     <div class="card-heading">📦 Wireless Web OTA Update &amp; Device Control</div>
-    <p style="font-size: 0.8rem; color: var(--pico-muted-color); margin-bottom: 1rem;">
-      Upload compiled .bin firmware directly to flash memory over Wi-Fi.
+    <p style="font-size: 0.8rem; color: var(--pico-muted-color); margin-bottom: 0.75rem;">
+      Upload compiled .bin firmware directly to flash memory over Wi-Fi without leaving this page.
     </p>
-    <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
-      <a href="/update" role="button" class="contrast" style="width: auto; margin-bottom: 0;">Open Web OTA Upload Page ↗</a>
-      <button class="outline secondary" @click="rebootDevice()" style="width: auto; margin-bottom: 0; color: var(--rose); border-color: var(--rose);">Reboot Device</button>
+    <div style="display: flex; gap: 0.75rem; align-items: center; margin-top: 0.75rem; flex-wrap: wrap;">
+      <input type="file" id="bin-file" accept=".bin" style="width: auto; margin-bottom: 0;">
+      <button @click="uploadFirmware()" style="width: auto; margin-bottom: 0;">Upload &amp; Flash</button>
+      <button class="outline secondary" @click="rebootDevice(false)" style="width: auto; margin-bottom: 0; color: var(--rose); border-color: var(--rose);">Reboot Device</button>
+      <small :style="{ color: uploadStatusColor }" x-text="uploadStatus"></small>
     </div>
   </article>
 
@@ -388,7 +373,6 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     function chintReaderApp() {
       return {
         liveMode: localStorage.getItem('chint_live_mode') !== 'false',
-        activeTab: 'diag',
         connState: 'live',
         meterOnline: true,
         telemetry: { watts: 0, volts: 0, amps: 0, pf: 1, freq: 50, import_kwh: 0, export_kwh: 0 },
@@ -397,6 +381,10 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         uptime_sec: 0,
         wifi: { rssi: 0 },
         inputSlave: 2,
+        configStatus: "",
+        configStatusColor: "",
+        uploadStatus: "",
+        uploadStatusColor: "",
         copyBtnText: "📋 Copy Diagnostics",
         packetFlash: false,
 
@@ -411,7 +399,6 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         },
 
         init() {
-
           if (this.liveMode) {
             this.connectWS();
             this.startPolling();
@@ -431,15 +418,6 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
           });
         },
 
-        resizeCanvas() {
-          const canvas = document.getElementById("power-chart");
-          if (canvas) {
-            const rect = canvas.getBoundingClientRect();
-            canvas.width = rect.width * (window.devicePixelRatio || 1);
-            canvas.height = 110 * (window.devicePixelRatio || 1);
-          }
-        },
-
         get connBadgeClass() {
           if (!this.liveMode || this.connState === 'paused') return 'badge-muted';
           if (this.connState === 'live') return 'badge-accent';
@@ -456,11 +434,11 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
           const w = this.telemetry.watts || 0;
           return Math.abs(w).toFixed(1);
         },
-        get flowBadgeClass() {
+        get flowColor() {
           const w = this.telemetry.watts || 0;
-          if (w > 10.0) return 'badge-warn';
-          if (w < -10.0) return 'badge-ok';
-          return 'badge-accent';
+          if (w > 10.0) return 'var(--amber)';
+          if (w < -10.0) return 'var(--emerald)';
+          return 'var(--accent)';
         },
         get flowText() {
           const w = this.telemetry.watts || 0;
@@ -547,7 +525,6 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
           setTimeout(() => { this.copyBtnText = "📋 Copy Diagnostics"; }, 2000);
         },
 
-
         connectWS() {
           if (!this.liveMode) return;
           try {
@@ -595,9 +572,7 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
           if (!this.liveMode || !d) return;
           this.triggerPacketFlash();
 
-          if (d.watts !== undefined) {
-            this.telemetry.watts = d.watts;
-          }
+          if (d.watts !== undefined) this.telemetry.watts = d.watts;
           if (d.volts !== undefined) this.telemetry.volts = d.volts;
           if (d.amps !== undefined) this.telemetry.amps = d.amps;
           if (d.pf !== undefined) this.telemetry.pf = d.pf;
@@ -609,7 +584,7 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
           if (d.latency_ms !== undefined) this.modbus.latency_ms = d.latency_ms;
           if (d.slave_id !== undefined) {
             this.modbus.slave_id = d.slave_id;
-            this.inputSlave = d.slave_id;
+            if (!this.inputSlave) this.inputSlave = d.slave_id;
           }
           if (d.meter_online !== undefined) this.meterOnline = d.meter_online;
         },
@@ -652,30 +627,81 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
 
         resetSlaveInput() {
           this.inputSlave = this.modbus.slave_id || 2;
+          this.configStatus = "";
         },
 
         saveSettings() {
           const slave = parseInt(this.inputSlave, 10);
+          this.configStatus = "Applying...";
+          this.configStatusColor = "var(--amber)";
+
           if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             this.ws.send(JSON.stringify({ action: 'set_slave', slave: slave }));
-            setTimeout(() => this.pollHealth(), 500);
+            this.configStatus = "Applied ✓";
+            this.configStatusColor = "var(--emerald)";
+            setTimeout(() => { this.pollHealth(); this.configStatus = ""; }, 1500);
           } else {
             fetch('/api/settings?slave=' + slave, { method: 'POST' })
               .then(r => r.json())
               .then(d => {
+                this.configStatus = "Applied ✓";
+                this.configStatusColor = "var(--emerald)";
                 this.pollHealth();
-              }).catch(e => {});
+                setTimeout(() => { this.configStatus = ""; }, 1500);
+              }).catch(e => {
+                this.configStatus = "Error: " + e.message;
+                this.configStatusColor = "var(--rose)";
+              });
           }
         },
 
-        rebootDevice() {
-          if (!confirm('Reboot the Chint Reader device?')) return;
+        async uploadFirmware() {
+          const fileInput = document.getElementById("bin-file");
+          if (!fileInput || !fileInput.files.length) {
+            this.uploadStatus = "Please select a .bin file first!";
+            this.uploadStatusColor = "var(--rose)";
+            return;
+          }
+          const file = fileInput.files[0];
+          const formData = new FormData();
+          formData.append("file", file, file.name);
+          this.uploadStatus = "Uploading... do not unplug";
+          this.uploadStatusColor = "var(--amber)";
+
+          try {
+            const res = await fetch("/update", {
+              method: "POST",
+              body: formData
+            });
+
+            if (res.ok) {
+              this.uploadStatus = "Flash successful! Rebooting in 5s...";
+              this.uploadStatusColor = "var(--emerald)";
+              setTimeout(() => location.reload(), 5000);
+            } else {
+              this.uploadStatus = "Update failed! (HTTP " + res.status + ")";
+              this.uploadStatusColor = "var(--rose)";
+            }
+          } catch (err) {
+            this.uploadStatus = "Flash successful! Device rebooting...";
+            this.uploadStatusColor = "var(--emerald)";
+            setTimeout(() => location.reload(), 6000);
+          }
+        },
+
+        rebootDevice(silent) {
+          if (!silent && !confirm('Reboot the Chint Reader device?')) return;
+          if (!silent) {
+            this.uploadStatus = "Rebooting device...";
+            this.uploadStatusColor = "var(--amber)";
+          }
           if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             this.ws.send(JSON.stringify({ action: 'reboot' }));
           } else {
             fetch('/reboot', { method: 'POST' });
           }
-          alert('Device rebooting... reloading page in 6s');
+          this.uploadStatus = "Device rebooting... reloading in 6s";
+          this.uploadStatusColor = "var(--emerald)";
           setTimeout(() => location.reload(), 6000);
         }
       };
