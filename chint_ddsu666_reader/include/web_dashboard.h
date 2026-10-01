@@ -23,8 +23,31 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
       --accent: #38bdf8;
     }
     body {
-      padding-top: 1.5rem;
+      padding-top: 1rem;
       padding-bottom: 3rem;
+    }
+    /* Device Cross-Link Switcher */
+    .device-nav {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px dashed var(--pico-muted-border-color);
+    }
+    .device-nav-label {
+      font-size: 0.74rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--pico-muted-color);
+      font-weight: 600;
+    }
+    .btn-xs {
+      padding: 0.2rem 0.6rem !important;
+      font-size: 0.78rem !important;
+      margin-bottom: 0 !important;
+      border-radius: 6px !important;
     }
     .header-bar {
       display: flex;
@@ -32,7 +55,7 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
       align-items: center;
       flex-wrap: wrap;
       gap: 1rem;
-      margin-bottom: 1.5rem;
+      margin-bottom: 1.25rem;
       border-bottom: 1px solid var(--pico-muted-border-color);
       padding-bottom: 1rem;
     }
@@ -91,14 +114,24 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
       background: var(--emerald);
       box-shadow: 0 0 6px var(--emerald);
       display: inline-block;
+      transition: transform 0.1s ease;
     }
     .live-dot.paused {
       background: var(--pico-muted-color);
       box-shadow: none;
     }
+    /* Packet flash micro-animation */
+    @keyframes packet-pulse {
+      0% { transform: scale(1); filter: brightness(1); }
+      50% { transform: scale(1.6); filter: brightness(2); box-shadow: 0 0 12px #38bdf8, 0 0 6px #fff; }
+      100% { transform: scale(1); filter: brightness(1); }
+    }
+    .packet-flash {
+      animation: packet-pulse 0.18s ease-out;
+    }
     .hero-card {
       text-align: center;
-      padding: 2rem 1.5rem;
+      padding: 1.5rem;
       margin-bottom: 1.25rem;
       border: 1px solid var(--pico-muted-border-color);
     }
@@ -115,6 +148,44 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
       font-weight: 500;
       color: var(--pico-muted-color);
       margin-left: 0.25rem;
+    }
+    /* Bidirectional Power Flow Gauge */
+    .flow-gauge-wrap {
+      width: 100%;
+      max-width: 480px;
+      margin: 0.75rem auto 0.5rem auto;
+    }
+    .flow-gauge-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      margin-bottom: 0.25rem;
+    }
+    .flow-gauge-track {
+      position: relative;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 9999px;
+      overflow: hidden;
+    }
+    .flow-gauge-center {
+      position: absolute;
+      left: 50%;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: var(--pico-muted-border-color);
+      transform: translateX(-50%);
+      z-index: 2;
+    }
+    .flow-gauge-fill {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      transition: left 0.15s ease-out, width 0.15s ease-out, background 0.15s ease-out;
+      border-radius: 9999px;
     }
     .val-display {
       font-size: 1.8rem;
@@ -149,9 +220,23 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
       padding: 1.25rem;
       border: 1px solid var(--pico-muted-border-color);
     }
+    .chart-box {
+      margin-top: 1rem;
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid var(--pico-muted-border-color);
+      border-radius: 8px;
+      padding: 0.5rem;
+    }
   </style>
 </head>
 <body class="container" x-data="chintReaderApp()" x-init="init()">
+  <!-- Cross-Device Quick Switcher -->
+  <nav class="device-nav">
+    <span class="device-nav-label">Device Switcher:</span>
+    <a href="http://ddsu666.local" target="_blank" role="button" class="outline secondary btn-xs">⚡ Dual Emulator (.169) ↗</a>
+    <button class="contrast btn-xs" style="pointer-events: none; border-color: var(--accent); color: var(--accent);">🌐 Chint Master Reader (This Device)</button>
+  </nav>
+
   <!-- Header -->
   <header class="header-bar">
     <div class="header-title">
@@ -160,7 +245,7 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     </div>
     <div class="header-actions">
       <button class="outline" :class="liveMode ? 'contrast' : 'secondary'" @click="toggleLiveMode()" style="padding: 0.3rem 0.75rem; font-size: 0.82rem; margin-bottom: 0;">
-        <span class="live-dot" :class="{ 'paused': !liveMode }"></span>
+        <span class="live-dot" :class="{ 'paused': !liveMode, 'packet-flash': packetFlash }"></span>
         <span x-text="liveMode ? 'Live: ON' : 'Live: PAUSED'"></span>
       </button>
       <span class="badge" :class="connBadgeClass" x-text="connBadgeText"></span>
@@ -171,13 +256,37 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     </div>
   </header>
 
-  <!-- Hero Card: Active Power -->
+  <!-- Hero Card: Active Power & Bidirectional Gauge -->
   <article class="hero-card">
     <div class="card-heading" style="justify-content: center;">Active Grid Power</div>
     <div class="hero-val">
       <span x-text="wattsDisplay"></span><span class="hero-unit">W</span>
     </div>
     <span class="badge" :class="flowBadgeClass" x-text="flowText"></span>
+
+    <!-- Bidirectional Power Flow Bar -->
+    <div class="flow-gauge-wrap">
+      <div class="flow-gauge-labels">
+        <small style="color: var(--emerald);">◀ Export (Solar)</small>
+        <small style="color: var(--pico-muted-color);">0 W</small>
+        <small style="color: var(--amber);">Import (Grid) ▶</small>
+      </div>
+      <div class="flow-gauge-track">
+        <div class="flow-gauge-center"></div>
+        <div class="flow-gauge-fill" :style="flowGaugeStyle"></div>
+      </div>
+    </div>
+  </article>
+
+  <!-- Real-Time 60-Second Power Waveform Card -->
+  <article>
+    <div class="card-heading">
+      <span>📈 Real-Time 60-Second Grid Power Waveform</span>
+      <small style="color: var(--pico-muted-color);">Sampling @ 1s &bull; Auto-scaled</small>
+    </div>
+    <div class="chart-box">
+      <canvas id="power-chart" width="800" height="110" style="width: 100%; height: 110px; display: block;"></canvas>
+    </div>
   </article>
 
   <!-- Electricals Grid -->
@@ -214,7 +323,10 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
 
   <!-- Diagnostics & Modbus Bus Health -->
   <article>
-    <div class="card-heading">🩺 Modbus Bus Health &amp; Telemetry Diagnostics</div>
+    <div class="card-heading">
+      <span>🩺 Modbus Bus Health &amp; Telemetry Diagnostics</span>
+      <button class="outline secondary btn-xs" @click="copyDiagnostics()" x-text="copyBtnText"></button>
+    </div>
     <div class="status-row">
       <span>Modbus Polling Speed</span>
       <strong style="color: var(--accent);" x-text="(modbus.rate_hz ? modbus.rate_hz.toFixed(1) : '0.0') + ' Hz'"></strong>
@@ -286,10 +398,18 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         wifi: { rssi: 0 },
         modalOpen: false,
         inputSlave: 2,
+        copyBtnText: "📋 Copy Diagnostics",
+        packetFlash: false,
+
+        // Rolling 60s power buffer
+        powerHistory: [],
+        maxHistory: 60,
+        lastSampleTime: 0,
 
         ws: null,
         wsTimer: null,
         pollTimer: null,
+        flashTimer: null,
 
         get wsUrl() {
           const host = window.location.hostname || "10.0.0.197";
@@ -297,6 +417,11 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         },
 
         init() {
+          this.$nextTick(() => {
+            this.resizeCanvas();
+            window.addEventListener("resize", () => { this.resizeCanvas(); this.drawChart(); });
+          });
+
           if (this.liveMode) {
             this.connectWS();
             this.startPolling();
@@ -314,6 +439,15 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
               this.startPolling();
             }
           });
+        },
+
+        resizeCanvas() {
+          const canvas = document.getElementById("power-chart");
+          if (canvas) {
+            const rect = canvas.getBoundingClientRect();
+            canvas.width = rect.width * (window.devicePixelRatio || 1);
+            canvas.height = 110 * (window.devicePixelRatio || 1);
+          }
         },
 
         get connBadgeClass() {
@@ -344,6 +478,25 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
           if (w < -10.0) return '↑ Solar Export';
           return '⚡ Balanced';
         },
+        get flowGaugeStyle() {
+          const w = this.telemetry.watts || 0;
+          const maxW = 4000;
+          const clamped = Math.max(-maxW, Math.min(maxW, w));
+          const pct = (Math.abs(clamped) / maxW) * 50;
+          if (w >= 0) {
+            return {
+              left: '50%',
+              width: pct + '%',
+              background: 'var(--amber)'
+            };
+          } else {
+            return {
+              left: (50 - pct) + '%',
+              width: pct + '%',
+              background: 'var(--emerald)'
+            };
+          }
+        },
 
         toggleLiveMode() {
           this.liveMode = !this.liveMode;
@@ -361,6 +514,124 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             this.stopPolling();
             this.connState = 'paused';
           }
+        },
+
+        triggerPacketFlash() {
+          this.packetFlash = true;
+          if (this.flashTimer) clearTimeout(this.flashTimer);
+          this.flashTimer = setTimeout(() => { this.packetFlash = false; }, 180);
+        },
+
+        copyDiagnostics() {
+          const d = new Date().toISOString().replace('T', ' ').substring(0, 19);
+          const text = [
+            `=== Chint DDSU666 Modbus Master Diagnostics (${d}) ===`,
+            `Meter: ${this.meterOnline ? 'ONLINE' : 'OFFLINE'} | Slave ID: ${this.modbus.slave_id}`,
+            `Grid Power: ${this.telemetry.watts.toFixed(1)} W | ${this.telemetry.volts.toFixed(1)} V | ${this.telemetry.amps.toFixed(2)} A | PF: ${this.telemetry.pf.toFixed(2)}`,
+            `Accumulated: Import=${this.telemetry.import_kwh.toFixed(2)} kWh | Export=${this.telemetry.export_kwh.toFixed(2)} kWh`,
+            `Modbus RTU: Rate=${this.modbus.rate_hz.toFixed(1)} Hz | Latency=${this.modbus.latency_ms.toFixed(1)} ms | Queries=${this.modbus.total_queries} | CRC Errors=${this.modbus.crc_errors}`,
+            `WebSocket: Clients=${this.websocket.clients} | Stream=${this.wsUrl}`,
+            `Wi-Fi: RSSI=${this.wifi.rssi} dBm | Uptime=${Math.floor(this.uptime_sec / 60)} min`
+          ].join('\n');
+
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(() => {
+              this.copyBtnText = "Copied! ✓";
+              setTimeout(() => { this.copyBtnText = "📋 Copy Diagnostics"; }, 2000);
+            }).catch(() => {
+              this.fallbackCopy(text);
+            });
+          } else {
+            this.fallbackCopy(text);
+          }
+        },
+
+        fallbackCopy(text) {
+          const ta = document.createElement("textarea");
+          ta.value = text;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand("copy");
+          document.body.removeChild(ta);
+          this.copyBtnText = "Copied! ✓";
+          setTimeout(() => { this.copyBtnText = "📋 Copy Diagnostics"; }, 2000);
+        },
+
+        drawChart() {
+          const canvas = document.getElementById("power-chart");
+          if (!canvas) return;
+          const ctx = canvas.getContext("2d");
+          const w = canvas.width;
+          const h = canvas.height;
+
+          ctx.clearRect(0, 0, w, h);
+
+          if (this.powerHistory.length < 2) return;
+
+          let maxAbs = 600;
+          for (let i = 0; i < this.powerHistory.length; i++) {
+            const v = Math.abs(this.powerHistory[i]);
+            if (v > maxAbs) maxAbs = v;
+          }
+          maxAbs = Math.ceil((maxAbs * 1.15) / 100) * 100;
+
+          const midY = h / 2;
+
+          // Zero line
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+          ctx.lineWidth = 1;
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.moveTo(0, midY);
+          ctx.lineTo(w, midY);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          // Scale markers
+          ctx.fillStyle = "rgba(255, 255, 255, 0.4)";
+          ctx.font = "11px system-ui, sans-serif";
+          ctx.fillText("+" + (maxAbs >= 1000 ? (maxAbs / 1000).toFixed(1) + " kW" : maxAbs + " W"), 8, 14);
+          ctx.fillText("0 W", 8, midY - 4);
+          ctx.fillText("-" + (maxAbs >= 1000 ? (maxAbs / 1000).toFixed(1) + " kW" : maxAbs + " W"), 8, h - 4);
+
+          // Plot waveform
+          const step = w / (this.maxHistory - 1);
+          const startX = w - (this.powerHistory.length - 1) * step;
+
+          ctx.beginPath();
+          ctx.lineWidth = 2.5;
+
+          for (let i = 0; i < this.powerHistory.length; i++) {
+            const val = this.powerHistory[i];
+            const x = startX + i * step;
+            const y = midY - (val / maxAbs) * (midY - 8);
+
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          }
+
+          const currentVal = this.powerHistory[this.powerHistory.length - 1];
+          ctx.strokeStyle = currentVal >= 0 ? "#f59e0b" : "#10b981";
+          ctx.stroke();
+
+          // Gradient fill
+          ctx.lineTo(w, midY);
+          ctx.lineTo(startX, midY);
+          ctx.closePath();
+          const grad = ctx.createLinearGradient(0, 0, 0, h);
+          grad.addColorStop(0, "rgba(245, 158, 11, 0.22)");
+          grad.addColorStop(0.5, "rgba(255, 255, 255, 0.02)");
+          grad.addColorStop(1, "rgba(16, 185, 129, 0.22)");
+          ctx.fillStyle = grad;
+          ctx.fill();
+
+          // Head dot
+          const lastX = w - 2;
+          const lastY = midY - (currentVal / maxAbs) * (midY - 8);
+          ctx.fillStyle = currentVal >= 0 ? "#f59e0b" : "#10b981";
+          ctx.beginPath();
+          ctx.arc(lastX, lastY, 3.5, 0, Math.PI * 2);
+          ctx.fill();
         },
 
         connectWS() {
@@ -408,7 +679,20 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
 
         applyTelemetry(d) {
           if (!this.liveMode || !d) return;
-          if (d.watts !== undefined) this.telemetry.watts = d.watts;
+          this.triggerPacketFlash();
+
+          if (d.watts !== undefined) {
+            this.telemetry.watts = d.watts;
+            const now = Date.now();
+            if (now - this.lastSampleTime >= 900) {
+              this.lastSampleTime = now;
+              this.powerHistory.push(this.telemetry.watts || 0);
+              if (this.powerHistory.length > this.maxHistory) {
+                this.powerHistory.shift();
+              }
+              this.drawChart();
+            }
+          }
           if (d.volts !== undefined) this.telemetry.volts = d.volts;
           if (d.amps !== undefined) this.telemetry.amps = d.amps;
           if (d.pf !== undefined) this.telemetry.pf = d.pf;

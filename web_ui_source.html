@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DDSU666 Modbus Emulator</title>
-  <!-- Pico.css Minimal/Semantic CSS Framework via CDN -->
+  <!-- Pico.css Minimal & Semantic CSS Framework via CDN -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
   <!-- Alpine.js Lightweight Reactive UI Library via CDN -->
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
@@ -17,8 +17,31 @@
       --accent: #38bdf8;
     }
     body {
-      padding-top: 1.5rem;
+      padding-top: 1rem;
       padding-bottom: 3rem;
+    }
+    /* Device Cross-Link Switcher */
+    .device-nav {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px dashed var(--pico-muted-border-color);
+    }
+    .device-nav-label {
+      font-size: 0.74rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--pico-muted-color);
+      font-weight: 600;
+    }
+    .btn-xs {
+      padding: 0.2rem 0.6rem !important;
+      font-size: 0.78rem !important;
+      margin-bottom: 0 !important;
+      border-radius: 6px !important;
     }
     .header-bar {
       display: flex;
@@ -26,7 +49,7 @@
       align-items: center;
       flex-wrap: wrap;
       gap: 1rem;
-      margin-bottom: 1.5rem;
+      margin-bottom: 1.25rem;
       border-bottom: 1px solid var(--pico-muted-border-color);
       padding-bottom: 1rem;
     }
@@ -85,10 +108,20 @@
       background: var(--emerald);
       box-shadow: 0 0 6px var(--emerald);
       display: inline-block;
+      transition: transform 0.1s ease;
     }
     .live-dot.paused {
       background: var(--pico-muted-color);
       box-shadow: none;
+    }
+    /* Packet flash micro-animation */
+    @keyframes packet-pulse {
+      0% { transform: scale(1); filter: brightness(1); }
+      50% { transform: scale(1.6); filter: brightness(2); box-shadow: 0 0 12px #38bdf8, 0 0 6px #fff; }
+      100% { transform: scale(1); filter: brightness(1); }
+    }
+    .packet-flash {
+      animation: packet-pulse 0.18s ease-out;
     }
     .val-display {
       font-size: 2rem;
@@ -96,6 +129,43 @@
       color: var(--pico-color);
       line-height: 1.1;
       margin: 0.4rem 0;
+    }
+    /* Bidirectional Power Flow Gauge */
+    .flow-gauge-wrap {
+      width: 100%;
+      margin: 0.6rem 0 0.4rem 0;
+    }
+    .flow-gauge-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      margin-bottom: 0.25rem;
+    }
+    .flow-gauge-track {
+      position: relative;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 9999px;
+      overflow: hidden;
+    }
+    .flow-gauge-center {
+      position: absolute;
+      left: 50%;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: var(--pico-muted-border-color);
+      transform: translateX(-50%);
+      z-index: 2;
+    }
+    .flow-gauge-fill {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      transition: left 0.15s ease-out, width 0.15s ease-out, background 0.15s ease-out;
+      border-radius: 9999px;
     }
     .status-row {
       display: flex;
@@ -136,18 +206,33 @@
     select, input {
       margin-bottom: 0;
     }
+    /* Canvas waveform container */
+    .chart-box {
+      margin-top: 1rem;
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid var(--pico-muted-border-color);
+      border-radius: 8px;
+      padding: 0.5rem;
+    }
   </style>
 </head>
 <body class="container" x-data="dashboardApp()" x-init="init()">
+  <!-- Cross-Device Quick Switcher -->
+  <nav class="device-nav">
+    <span class="device-nav-label">Device Switcher:</span>
+    <button class="contrast btn-xs" style="pointer-events: none; border-color: var(--accent); color: var(--accent);">⚡ DDSU666 Emulator (This Device)</button>
+    <a href="http://chint-reader.local" target="_blank" role="button" class="outline secondary btn-xs">🌐 Chint Master Reader (.197) ↗</a>
+  </nav>
+
   <!-- Header -->
   <header class="header-bar">
     <div class="header-title">
       <h1>DDSU666 Modbus Emulator</h1>
-      <small>Zero-Export Real-Time Energy Bridge &bull; Pico + Alpine</small>
+      <small>Zero-Export Real-Time Energy Bridge &bull; Dual Slave ID 2 (Grid) + 1 (PV)</small>
     </div>
     <div class="header-actions">
       <button class="outline" :class="liveMode ? 'contrast' : 'secondary'" @click="toggleLiveMode()" style="padding: 0.3rem 0.75rem; font-size: 0.82rem; margin-bottom: 0;">
-        <span class="live-dot" :class="{ 'paused': !liveMode }"></span>
+        <span class="live-dot" :class="{ 'paused': !liveMode, 'packet-flash': packetFlash }"></span>
         <span x-text="liveMode ? 'Live: ON' : 'Live: PAUSED'"></span>
       </button>
       <span class="badge" :class="connBadgeClass" x-text="connBadgeText"></span>
@@ -157,18 +242,39 @@
 
   <!-- Top Metrics Grid -->
   <div class="grid">
+    <!-- Grid Active Power & Flow Gauge -->
     <article>
-      <div class="card-heading">⚡ Grid Active Power</div>
+      <div class="card-heading">
+        <span>⚡ Grid Active Power</span>
+        <small :style="{ color: gridFlowColor }" x-text="gridFlowText"></small>
+      </div>
       <div class="val-display" x-text="gridWattsDisplay"></div>
-      <small :style="{ color: gridFlowColor }" x-text="gridFlowText"></small>
+      
+      <!-- Bidirectional Flow Gauge (Export ⟷ Import) -->
+      <div class="flow-gauge-wrap">
+        <div class="flow-gauge-labels">
+          <small style="color: var(--emerald);">◀ Export (Solar)</small>
+          <small style="color: var(--pico-muted-color);">0 W</small>
+          <small style="color: var(--amber);">Import (Grid) ▶</small>
+        </div>
+        <div class="flow-gauge-track">
+          <div class="flow-gauge-center"></div>
+          <div class="flow-gauge-fill" :style="flowGaugeStyle"></div>
+        </div>
+      </div>
     </article>
 
+    <!-- PV Solar Power -->
     <article>
       <div class="card-heading">☀️ PV Solar Power</div>
       <div class="val-display" x-text="pvWattsDisplay"></div>
       <small style="color: var(--pico-muted-color);" x-text="'Total Yield: ' + (pv.yield_kwh ? pv.yield_kwh.toFixed(2) : '0.00') + ' kWh'"></small>
+      <div style="margin-top: 0.75rem;">
+        <span class="badge" :class="pvSourceBadgeClass" x-text="pvSourceBadgeText"></span>
+      </div>
     </article>
 
+    <!-- Grid Electricals -->
     <article>
       <div class="card-heading">🔌 Grid Electricals</div>
       <div class="status-row"><span>Voltage</span><strong x-text="(grid.volts ? grid.volts.toFixed(1) : '--') + ' V'"></strong></div>
@@ -177,6 +283,7 @@
       <div class="status-row"><span>Frequency</span><strong x-text="(grid.freq ? grid.freq.toFixed(1) : '--') + ' Hz'"></strong></div>
     </article>
 
+    <!-- Energy Accumulators -->
     <article>
       <div class="card-heading">📊 Energy Accumulators</div>
       <div class="status-row"><span>Total Import</span><strong x-text="(grid.import_kwh ? grid.import_kwh.toFixed(2) : '--') + ' kWh'"></strong></div>
@@ -185,9 +292,23 @@
     </article>
   </div>
 
+  <!-- Real-Time 60-Second Power Waveform Card -->
+  <article>
+    <div class="card-heading">
+      <span>📈 Real-Time 60-Second Grid Power Waveform</span>
+      <small style="color: var(--pico-muted-color);">Sampling @ 1s &bull; Auto-scaled</small>
+    </div>
+    <div class="chart-box">
+      <canvas id="power-chart" width="800" height="110" style="width: 100%; height: 110px; display: block;"></canvas>
+    </div>
+  </article>
+
   <!-- System Diagnostics & Controls -->
   <article>
-    <div class="card-heading">🩺 System Diagnostics &amp; Controls</div>
+    <div class="card-heading">
+      <span>🩺 System Diagnostics &amp; Controls</span>
+      <button class="outline secondary btn-xs" @click="copyDiagnostics()" x-text="copyBtnText"></button>
+    </div>
 
     <div class="status-row" style="align-items: center;">
       <span>⚙️ Grid Source Priority</span>
@@ -400,12 +521,26 @@
         uploadStatus: "",
         uploadStatusColor: "",
         otaPassword: localStorage.getItem("ota_pwd") || "admin",
+        copyBtnText: "📋 Copy Diagnostics",
+        packetFlash: false,
+
+        // Rolling 60s power buffer
+        powerHistory: [],
+        maxHistory: 60,
+        lastSampleTime: 0,
 
         ws: null,
         wsReconnectTimer: null,
         pollTimer: null,
+        flashTimer: null,
 
         init() {
+          // Initialize canvas size to match container
+          this.$nextTick(() => {
+            this.resizeCanvas();
+            window.addEventListener("resize", () => { this.resizeCanvas(); this.drawChart(); });
+          });
+
           if (this.liveMode) {
             this.initWebSocket();
           } else {
@@ -421,6 +556,15 @@
               this.initWebSocket();
             }
           });
+        },
+
+        resizeCanvas() {
+          const canvas = document.getElementById("power-chart");
+          if (canvas) {
+            const rect = canvas.getBoundingClientRect();
+            canvas.width = rect.width * (window.devicePixelRatio || 1);
+            canvas.height = 110 * (window.devicePixelRatio || 1);
+          }
         },
 
         // --- Computed Properties ---
@@ -456,6 +600,25 @@
           if (w > 5.0) return "↓ Importing from Grid";
           if (w < -5.0) return "↑ Exporting to Grid";
           return "⚡ Balanced (Zero Export)";
+        },
+        get flowGaugeStyle() {
+          const w = this.grid.watts || 0;
+          const maxW = 4000; // 4 kW reference scale
+          const clamped = Math.max(-maxW, Math.min(maxW, w));
+          const pct = (Math.abs(clamped) / maxW) * 50;
+          if (w >= 0) {
+            return {
+              left: '50%',
+              width: pct + '%',
+              background: 'var(--amber)'
+            };
+          } else {
+            return {
+              left: (50 - pct) + '%',
+              width: pct + '%',
+              background: 'var(--emerald)'
+            };
+          }
         },
         get pvWattsDisplay() {
           const w = this.pv.watts || 0;
@@ -564,6 +727,12 @@
           }
         },
 
+        triggerPacketFlash() {
+          this.packetFlash = true;
+          if (this.flashTimer) clearTimeout(this.flashTimer);
+          this.flashTimer = setTimeout(() => { this.packetFlash = false; }, 180);
+        },
+
         formatTimeOffset(t) {
           const mins = Math.floor(t / 60);
           const secs = t % 60;
@@ -593,6 +762,121 @@
         setFilterMode(val) {
           this.filterMode = val;
           this.sendAction({ action: "set_filter", mode: val }, "/api/filter?mode=" + val);
+        },
+
+        copyDiagnostics() {
+          const d = new Date().toISOString().replace('T', ' ').substring(0, 19);
+          const text = [
+            `=== DDSU666 Emulator Diagnostics (${d}) ===`,
+            `Status: ${this.status} | Uptime: ${Math.floor(this.uptime_sec / 60)} min | Free Heap: ${Math.floor(this.free_heap / 1024)} KB`,
+            `Grid Power: ${this.grid.watts.toFixed(1)} W (${this.grid.watts > 0 ? 'IMPORT' : 'EXPORT'}) | ${this.grid.volts.toFixed(1)} V | ${this.grid.amps.toFixed(2)} A | PF: ${this.grid.pf.toFixed(2)}`,
+            `PV Power: ${this.pv.watts.toFixed(1)} W | Yield: ${this.pv.yield_kwh.toFixed(2)} kWh`,
+            `Active Sources: Grid=${this.grid.source} | PV=${this.pv.source}`,
+            `Chint WS: ${this.chintBadgeText}`,
+            `Shelly WS: ${this.shellyBadgeText}`,
+            `OpenDTU: ${this.opendtuBadgeText}`,
+            `Modbus Inverter Link: Rate=${this.modbus.rate_hz.toFixed(1)} Hz | Queries=${this.modbus.queries} | CRC Errors=${this.modbus.crc_errors}`,
+            `Wi-Fi: IP=${this.wifi.ip} | RSSI=${this.wifi.rssi} dBm`
+          ].join('\n');
+
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(() => {
+              this.copyBtnText = "Copied! ✓";
+              setTimeout(() => { this.copyBtnText = "📋 Copy Diagnostics"; }, 2000);
+            }).catch(() => {
+              this.fallbackCopy(text);
+            });
+          } else {
+            this.fallbackCopy(text);
+          }
+        },
+
+        fallbackCopy(text) {
+          const ta = document.createElement("textarea");
+          ta.value = text;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand("copy");
+          document.body.removeChild(ta);
+          this.copyBtnText = "Copied! ✓";
+          setTimeout(() => { this.copyBtnText = "📋 Copy Diagnostics"; }, 2000);
+        },
+
+        drawChart() {
+          const canvas = document.getElementById("power-chart");
+          if (!canvas) return;
+          const ctx = canvas.getContext("2d");
+          const w = canvas.width;
+          const h = canvas.height;
+
+          ctx.clearRect(0, 0, w, h);
+
+          if (this.powerHistory.length < 2) return;
+
+          let maxAbs = 600;
+          for (let i = 0; i < this.powerHistory.length; i++) {
+            const v = Math.abs(this.powerHistory[i]);
+            if (v > maxAbs) maxAbs = v;
+          }
+          maxAbs = Math.ceil((maxAbs * 1.15) / 100) * 100;
+
+          const midY = h / 2;
+
+          // Zero line
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+          ctx.lineWidth = 1;
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.moveTo(0, midY);
+          ctx.lineTo(w, midY);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          // Scale markers
+          ctx.fillStyle = "rgba(255, 255, 255, 0.4)";
+          ctx.font = "11px system-ui, sans-serif";
+          ctx.fillText("+" + (maxAbs >= 1000 ? (maxAbs / 1000).toFixed(1) + " kW" : maxAbs + " W"), 8, 14);
+          ctx.fillText("0 W", 8, midY - 4);
+          ctx.fillText("-" + (maxAbs >= 1000 ? (maxAbs / 1000).toFixed(1) + " kW" : maxAbs + " W"), 8, h - 4);
+
+          // Plot waveform
+          const step = w / (this.maxHistory - 1);
+          const startX = w - (this.powerHistory.length - 1) * step;
+
+          ctx.beginPath();
+          ctx.lineWidth = 2.5;
+
+          for (let i = 0; i < this.powerHistory.length; i++) {
+            const val = this.powerHistory[i];
+            const x = startX + i * step;
+            const y = midY - (val / maxAbs) * (midY - 8);
+
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          }
+
+          const currentVal = this.powerHistory[this.powerHistory.length - 1];
+          ctx.strokeStyle = currentVal >= 0 ? "#f59e0b" : "#10b981";
+          ctx.stroke();
+
+          // Gradient fill
+          ctx.lineTo(w, midY);
+          ctx.lineTo(startX, midY);
+          ctx.closePath();
+          const grad = ctx.createLinearGradient(0, 0, 0, h);
+          grad.addColorStop(0, "rgba(245, 158, 11, 0.22)");
+          grad.addColorStop(0.5, "rgba(255, 255, 255, 0.02)");
+          grad.addColorStop(1, "rgba(16, 185, 129, 0.22)");
+          ctx.fillStyle = grad;
+          ctx.fill();
+
+          // Head dot
+          const lastX = w - 2;
+          const lastY = midY - (currentVal / maxAbs) * (midY - 8);
+          ctx.fillStyle = currentVal >= 0 ? "#f59e0b" : "#10b981";
+          ctx.beginPath();
+          ctx.arc(lastX, lastY, 3.5, 0, Math.PI * 2);
+          ctx.fill();
         },
 
         initWebSocket() {
@@ -675,8 +959,22 @@
 
         applyData(d) {
           if (!this.liveMode || !d) return;
+          this.triggerPacketFlash();
+
           if (d.status) this.status = d.status;
-          if (d.grid) this.grid = Object.assign({}, this.grid, d.grid);
+          if (d.grid) {
+            this.grid = Object.assign({}, this.grid, d.grid);
+            // Append to power rolling waveform (throttled to ~1 sample per second)
+            const now = Date.now();
+            if (now - this.lastSampleTime >= 900) {
+              this.lastSampleTime = now;
+              this.powerHistory.push(this.grid.watts || 0);
+              if (this.powerHistory.length > this.maxHistory) {
+                this.powerHistory.shift();
+              }
+              this.drawChart();
+            }
+          }
           if (d.pv) this.pv = Object.assign({}, this.pv, d.pv);
           if (d.chint) this.chint = Object.assign({}, this.chint, d.chint);
           if (d.shelly) this.shelly = Object.assign({}, this.shelly, d.shelly);
