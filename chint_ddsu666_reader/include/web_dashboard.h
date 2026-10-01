@@ -338,7 +338,12 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
       </div>
       <div class="status-row">
         <span>Connected WebSocket Clients</span>
-        <strong style="color: var(--emerald);" x-text="(websocket.clients || 0) + ' active'"></strong>
+        <span style="text-align: right;">
+          <strong style="color: var(--emerald);" x-text="(websocket.clients || 0) + ' active'"></strong>
+          <template x-if="websocket.client_ips && websocket.client_ips.length">
+            <span style="font-size: 0.76rem; color: var(--pico-muted-color); display: block;" x-text="websocket.client_ips.join(', ')"></span>
+          </template>
+        </span>
       </div>
       <div class="status-row">
         <span>WebSocket Stream Endpoint</span>
@@ -377,7 +382,7 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         meterOnline: true,
         telemetry: { watts: 0, volts: 0, amps: 0, pf: 1, freq: 50, import_kwh: 0, export_kwh: 0 },
         modbus: { rate_hz: 0, latency_ms: 0, slave_id: 2, total_queries: 0, crc_errors: 0, timeouts: 0 },
-        websocket: { clients: 0, packets_sent: 0 },
+        websocket: { clients: 0, client_ips: [], packets_sent: 0 },
         uptime_sec: 0,
         wifi: { rssi: 0 },
         inputSlave: 2,
@@ -406,10 +411,19 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             this.connState = 'paused';
           }
 
+          window.addEventListener("beforeunload", () => {
+            if (this.ws) {
+              try { this.ws.close(1000, "tab closed"); } catch(e) {}
+            }
+          });
+
           document.addEventListener("visibilitychange", () => {
             if (!this.liveMode) return;
             if (document.hidden) {
-              if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.close();
+              if (this.ws) {
+                try { this.ws.close(); } catch(e) {}
+                this.ws = null;
+              }
               this.stopPolling();
             } else {
               this.connectWS();
@@ -527,6 +541,9 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
 
         connectWS() {
           if (!this.liveMode) return;
+          if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+            return;
+          }
           try {
             this.ws = new WebSocket(this.wsUrl);
           } catch(e) {

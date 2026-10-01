@@ -73,6 +73,10 @@ void ChintWebServer::handleHealthJson() {
   ws["port"] = 81;
   ws["clients"] = _publisher.getClientCount();
   ws["packets_sent"] = _publisher.getPacketsBroadcast();
+  JsonArray clientIps = ws.createNestedArray("client_ips");
+  for (const String &ip : _publisher.getClientIPs()) {
+    clientIps.add(ip);
+  }
 
   char buf[1024];
   serializeJson(doc, buf, sizeof(buf));

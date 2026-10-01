@@ -22,6 +22,9 @@ public:
   virtual void onData(OnDataCallback cb) = 0;
 };
 
+#include <vector>
+#include <Arduino.h>
+
 /**
  * @brief Interface for telemetry stream broadcasting & publishing (DIP / ISP).
  */
@@ -37,4 +40,5 @@ public:
   virtual bool hasClients() const = 0;
   virtual uint8_t getClientCount() const = 0;
   virtual uint32_t getPacketsBroadcast() const = 0;
+  virtual std::vector<String> getClientIPs() const { return {}; }
 };

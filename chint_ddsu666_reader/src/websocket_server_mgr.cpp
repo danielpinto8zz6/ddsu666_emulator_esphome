@@ -11,6 +11,9 @@ WebSocketServerManager::WebSocketServerManager(IChintMeterReader &reader, uint16
 
 void WebSocketServerManager::begin() {
   _ws.begin();
+  // Automatic WebSocket ping/pong heartbeat to clean up abandoned / dead connections:
+  // Ping interval: 10s, Pong timeout: 3s, Disconnect if 2 consecutive pings fail
+  _ws.enableHeartbeat(10000, 3000, 2);
   _ws.onEvent([this](uint8_t num, WStype_t type, uint8_t *payload, size_t length) {
     this->onEvent(num, type, payload, length);
   });
@@ -19,6 +22,25 @@ void WebSocketServerManager::begin() {
 
 void WebSocketServerManager::loop() {
   _ws.loop();
+}
+
+bool WebSocketServerManager::hasClients() const {
+  return const_cast<WebSocketsServer&>(_ws).connectedClients(false) > 0;
+}
+
+uint8_t WebSocketServerManager::getClientCount() const {
+  return (uint8_t)const_cast<WebSocketsServer&>(_ws).connectedClients(false);
+}
+
+std::vector<String> WebSocketServerManager::getClientIPs() const {
+  std::vector<String> ips;
+  for (uint8_t i = 0; i < WEBSOCKETS_SERVER_CLIENT_MAX; ++i) {
+    if (const_cast<WebSocketsServer&>(_ws).clientIsConnected(i)) {
+      IPAddress ip = const_cast<WebSocketsServer&>(_ws).remoteIP(i);
+      ips.push_back(ip.toString());
+    }
+  }
+  return ips;
 }
 
 void WebSocketServerManager::sendWelcomePacket(uint8_t num) {
@@ -58,16 +80,17 @@ void WebSocketServerManager::sendWelcomePacket(uint8_t num) {
 
 void WebSocketServerManager::onEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length) {
   switch (type) {
-    case WStype_DISCONNECTED:
-      if (_clientCount > 0) _clientCount--;
-      Serial.printf("[WebSocket Server] Client #%u disconnected. Active clients: %u\n", num, _clientCount);
+    case WStype_DISCONNECTED: {
+      uint8_t count = getClientCount();
+      Serial.printf("[WebSocket Server] Client #%u disconnected. Active clients: %u\n", num, count);
       break;
+    }
 
     case WStype_CONNECTED: {
-      _clientCount++;
       IPAddress ip = _ws.remoteIP(num);
+      uint8_t count = getClientCount();
       Serial.printf("[WebSocket Server] Client #%u connected from %s. Active clients: %u\n",
-                    num, ip.toString().c_str(), _clientCount);
+                    num, ip.toString().c_str(), count);
 
       // Immediately send welcome packet with current telemetry
       sendWelcomePacket(num);
@@ -174,7 +197,7 @@ void WebSocketServerManager::sendShellyRpcResponse(uint8_t num, int reqId, const
 }
 
 void WebSocketServerManager::broadcastTelemetry(const ChintTelemetry &data, const ModbusMasterStats &stats) {
-  if (_clientCount == 0) return;
+  if (!hasClients()) return;
 
   uint32_t now = millis();
   _lastBroadcastTime = now;

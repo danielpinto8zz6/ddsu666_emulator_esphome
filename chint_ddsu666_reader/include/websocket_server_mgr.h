@@ -21,9 +21,10 @@ public:
   // Broadcast fresh meter reading to all connected WebSocket clients
   void broadcastTelemetry(const ChintTelemetry &data, const ModbusMasterStats &stats) override;
 
-  bool hasClients() const override { return _clientCount > 0; }
-  uint8_t getClientCount() const override { return _clientCount; }
+  bool hasClients() const override;
+  uint8_t getClientCount() const override;
   uint32_t getPacketsBroadcast() const override { return _packetsBroadcast; }
+  std::vector<String> getClientIPs() const override;
 
 private:
   IChintMeterReader &_reader;
