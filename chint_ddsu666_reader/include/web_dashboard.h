@@ -220,13 +220,6 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
       padding: 1.25rem;
       border: 1px solid var(--pico-muted-border-color);
     }
-    .chart-box {
-      margin-top: 0.75rem;
-      background: rgba(0, 0, 0, 0.25);
-      border: 1px solid var(--pico-muted-border-color);
-      border-radius: 8px;
-      padding: 0.5rem;
-    }
     .tab-bar {
       display: flex;
       gap: 0.5rem;
@@ -291,16 +284,6 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     </div>
   </article>
 
-  <!-- Real-Time 60-Second Power Waveform Card -->
-  <article>
-    <div class="card-heading">
-      <span>📈 Real-Time 60-Second Grid Power Waveform</span>
-      <small style="color: var(--pico-muted-color);">1s Sampling &bull; Dotted Center Zero Line</small>
-    </div>
-    <div class="chart-box">
-      <canvas id="power-chart" width="800" height="110" style="width: 100%; height: 110px; display: block;"></canvas>
-    </div>
-  </article>
 
   <!-- Secondary Metrics: Electricals & Energy Accumulators -->
   <div class="grid">
@@ -417,11 +400,6 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         copyBtnText: "📋 Copy Diagnostics",
         packetFlash: false,
 
-        // Rolling 60s power buffer
-        powerHistory: [],
-        maxHistory: 60,
-        lastSampleTime: 0,
-
         ws: null,
         wsTimer: null,
         pollTimer: null,
@@ -433,10 +411,6 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         },
 
         init() {
-          this.$nextTick(() => {
-            this.resizeCanvas();
-            window.addEventListener("resize", () => { this.resizeCanvas(); this.drawChart(); });
-          });
 
           if (this.liveMode) {
             this.connectWS();
@@ -573,82 +547,6 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
           setTimeout(() => { this.copyBtnText = "📋 Copy Diagnostics"; }, 2000);
         },
 
-        drawChart() {
-          const canvas = document.getElementById("power-chart");
-          if (!canvas) return;
-          const ctx = canvas.getContext("2d");
-          const w = canvas.width;
-          const h = canvas.height;
-
-          ctx.clearRect(0, 0, w, h);
-
-          if (this.powerHistory.length < 2) return;
-
-          let maxAbs = 600;
-          for (let i = 0; i < this.powerHistory.length; i++) {
-            const v = Math.abs(this.powerHistory[i]);
-            if (v > maxAbs) maxAbs = v;
-          }
-          maxAbs = Math.ceil((maxAbs * 1.15) / 100) * 100;
-
-          const midY = h / 2;
-
-          // Zero line
-          ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
-          ctx.lineWidth = 1;
-          ctx.setLineDash([4, 4]);
-          ctx.beginPath();
-          ctx.moveTo(0, midY);
-          ctx.lineTo(w, midY);
-          ctx.stroke();
-          ctx.setLineDash([]);
-
-          // Scale markers
-          ctx.fillStyle = "rgba(255, 255, 255, 0.4)";
-          ctx.font = "11px system-ui, sans-serif";
-          ctx.fillText("+" + (maxAbs >= 1000 ? (maxAbs / 1000).toFixed(1) + " kW" : maxAbs + " W"), 8, 14);
-          ctx.fillText("0 W", 8, midY - 4);
-          ctx.fillText("-" + (maxAbs >= 1000 ? (maxAbs / 1000).toFixed(1) + " kW" : maxAbs + " W"), 8, h - 4);
-
-          // Plot waveform
-          const step = w / (this.maxHistory - 1);
-          const startX = w - (this.powerHistory.length - 1) * step;
-
-          ctx.beginPath();
-          ctx.lineWidth = 2.5;
-
-          for (let i = 0; i < this.powerHistory.length; i++) {
-            const val = this.powerHistory[i];
-            const x = startX + i * step;
-            const y = midY - (val / maxAbs) * (midY - 8);
-
-            if (i === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
-          }
-
-          const currentVal = this.powerHistory[this.powerHistory.length - 1];
-          ctx.strokeStyle = currentVal >= 0 ? "#f59e0b" : "#10b981";
-          ctx.stroke();
-
-          // Gradient fill
-          ctx.lineTo(w, midY);
-          ctx.lineTo(startX, midY);
-          ctx.closePath();
-          const grad = ctx.createLinearGradient(0, 0, 0, h);
-          grad.addColorStop(0, "rgba(245, 158, 11, 0.22)");
-          grad.addColorStop(0.5, "rgba(255, 255, 255, 0.02)");
-          grad.addColorStop(1, "rgba(16, 185, 129, 0.22)");
-          ctx.fillStyle = grad;
-          ctx.fill();
-
-          // Head dot
-          const lastX = w - 2;
-          const lastY = midY - (currentVal / maxAbs) * (midY - 8);
-          ctx.fillStyle = currentVal >= 0 ? "#f59e0b" : "#10b981";
-          ctx.beginPath();
-          ctx.arc(lastX, lastY, 3.5, 0, Math.PI * 2);
-          ctx.fill();
-        },
 
         connectWS() {
           if (!this.liveMode) return;
@@ -699,15 +597,6 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
 
           if (d.watts !== undefined) {
             this.telemetry.watts = d.watts;
-            const now = Date.now();
-            if (now - this.lastSampleTime >= 900) {
-              this.lastSampleTime = now;
-              this.powerHistory.push(this.telemetry.watts || 0);
-              if (this.powerHistory.length > this.maxHistory) {
-                this.powerHistory.shift();
-              }
-              this.drawChart();
-            }
           }
           if (d.volts !== undefined) this.telemetry.volts = d.volts;
           if (d.amps !== undefined) this.telemetry.amps = d.amps;
