@@ -221,11 +221,26 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
       border: 1px solid var(--pico-muted-border-color);
     }
     .chart-box {
-      margin-top: 1rem;
+      margin-top: 0.75rem;
       background: rgba(0, 0, 0, 0.25);
       border: 1px solid var(--pico-muted-border-color);
       border-radius: 8px;
       padding: 0.5rem;
+    }
+    .tab-bar {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+      border-bottom: 1px solid var(--pico-muted-border-color);
+      padding-bottom: 0.5rem;
+      overflow-x: auto;
+    }
+    .tab-btn {
+      padding: 0.35rem 0.85rem !important;
+      font-size: 0.82rem !important;
+      margin-bottom: 0 !important;
+      border-radius: 6px !important;
+      white-space: nowrap;
     }
   </style>
 </head>
@@ -250,8 +265,6 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
       </button>
       <span class="badge" :class="connBadgeClass" x-text="connBadgeText"></span>
       <span class="badge" :class="meterOnline ? 'badge-ok' : 'badge-err'" x-text="meterOnline ? 'METER ONLINE' : 'METER OFFLINE'"></span>
-      <button class="outline contrast" @click="openModal()" style="padding: 0.3rem 0.75rem; font-size: 0.82rem; margin-bottom: 0;">⚙️ Slave ID</button>
-      <a href="/update" role="button" class="contrast" style="padding: 0.3rem 0.75rem; font-size: 0.82rem; margin-bottom: 0;">📦 OTA</a>
       <button class="outline secondary" @click="rebootDevice()" style="padding: 0.3rem 0.75rem; font-size: 0.82rem; margin-bottom: 0; color: var(--rose); border-color: var(--rose);">↺ Reboot</button>
     </div>
   </header>
@@ -282,47 +295,41 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
   <article>
     <div class="card-heading">
       <span>📈 Real-Time 60-Second Grid Power Waveform</span>
-      <small style="color: var(--pico-muted-color);">Sampling @ 1s &bull; Auto-scaled</small>
+      <small style="color: var(--pico-muted-color);">1s Sampling &bull; Dotted Center Zero Line</small>
     </div>
     <div class="chart-box">
       <canvas id="power-chart" width="800" height="110" style="width: 100%; height: 110px; display: block;"></canvas>
     </div>
   </article>
 
-  <!-- Electricals Grid -->
+  <!-- Secondary Metrics: Electricals & Energy Accumulators -->
   <div class="grid">
     <article>
-      <div class="card-heading">Voltage</div>
-      <div class="val-display" x-text="(telemetry.volts ? telemetry.volts.toFixed(1) : '0.0') + ' V'"></div>
+      <div class="card-heading">🔌 Grid Electricals</div>
+      <div class="status-row"><span>Voltage</span><strong x-text="(telemetry.volts ? telemetry.volts.toFixed(1) : '0.0') + ' V'"></strong></div>
+      <div class="status-row"><span>Current</span><strong x-text="(telemetry.amps ? telemetry.amps.toFixed(2) : '0.00') + ' A'"></strong></div>
+      <div class="status-row"><span>Power Factor</span><strong x-text="telemetry.pf ? telemetry.pf.toFixed(2) : '1.00'"></strong></div>
+      <div class="status-row"><span>Frequency</span><strong x-text="(telemetry.freq ? telemetry.freq.toFixed(1) : '50.0') + ' Hz'"></strong></div>
     </article>
+
     <article>
-      <div class="card-heading">Current</div>
-      <div class="val-display" x-text="(telemetry.amps ? telemetry.amps.toFixed(2) : '0.00') + ' A'"></div>
-    </article>
-    <article>
-      <div class="card-heading">Power Factor</div>
-      <div class="val-display" x-text="telemetry.pf ? telemetry.pf.toFixed(2) : '1.00'"></div>
-    </article>
-    <article>
-      <div class="card-heading">Frequency</div>
-      <div class="val-display" x-text="(telemetry.freq ? telemetry.freq.toFixed(1) : '50.0') + ' Hz'"></div>
+      <div class="card-heading">📊 Energy Accumulators</div>
+      <div class="status-row"><span>Total Import</span><strong x-text="(telemetry.import_kwh ? telemetry.import_kwh.toFixed(2) : '0.00') + ' kWh'"></strong></div>
+      <div class="status-row"><span>Total Export</span><strong x-text="(telemetry.export_kwh ? telemetry.export_kwh.toFixed(2) : '0.00') + ' kWh'"></strong></div>
+      <div class="status-row"><span>Physical Meter ID</span><strong style="color: var(--accent);" x-text="'Slave ID ' + (modbus.slave_id || 2)"></strong></div>
+      <div class="status-row"><span>Baud Rate</span><strong>9600 8N1 (RS-485)</strong></div>
     </article>
   </div>
 
-  <!-- Energy Accumulators Grid -->
-  <div class="grid">
-    <article>
-      <div class="card-heading">Total Import Energy</div>
-      <div class="val-display" x-text="(telemetry.import_kwh ? telemetry.import_kwh.toFixed(2) : '0.00') + ' kWh'"></div>
-    </article>
-    <article>
-      <div class="card-heading">Total Export Energy</div>
-      <div class="val-display" x-text="(telemetry.export_kwh ? telemetry.export_kwh.toFixed(2) : '0.00') + ' kWh'"></div>
-    </article>
-  </div>
+  <!-- Bottom Utility Maintenance Section: Tabbed Navigation -->
+  <nav class="tab-bar">
+    <button class="tab-btn" :class="activeTab === 'diag' ? 'contrast' : 'outline secondary'" @click="activeTab = 'diag'">🩺 Modbus Diagnostics</button>
+    <button class="tab-btn" :class="activeTab === 'settings' ? 'contrast' : 'outline secondary'" @click="activeTab = 'settings'">⚙️ Slave ID Configuration</button>
+    <button class="tab-btn" :class="activeTab === 'ota' ? 'contrast' : 'outline secondary'" @click="activeTab = 'ota'">📦 Firmware OTA &amp; Control</button>
+  </nav>
 
-  <!-- Diagnostics & Modbus Bus Health -->
-  <article>
+  <!-- Tab 1: Diagnostics & Modbus Bus Health -->
+  <article x-show="activeTab === 'diag'">
     <div class="card-heading">
       <span>🩺 Modbus Bus Health &amp; Telemetry Diagnostics</span>
       <button class="outline secondary btn-xs" @click="copyDiagnostics()" x-text="copyBtnText"></button>
@@ -360,26 +367,35 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     </div>
   </article>
 
-  <!-- Modbus Slave ID Modal Dialog -->
-  <dialog :open="modalOpen">
-    <article style="max-width: 420px; width: 100%;">
-      <header style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-        <strong>⚙️ Modbus Slave ID Configuration</strong>
-        <button aria-label="Close" rel="prev" @click="closeModal()" style="border: none; background: none; font-size: 1.2rem; cursor: pointer; padding: 0;">✕</button>
-      </header>
+  <!-- Tab 2: Modbus Slave ID Configuration -->
+  <article x-show="activeTab === 'settings'">
+    <div class="card-heading">⚙️ Modbus Slave ID Configuration</div>
+    <p style="font-size: 0.8rem; color: var(--pico-muted-color); margin-bottom: 1rem;">
+      Configure the physical Chint DDSU666 Modbus RTU address. Saved to ESP32 NVS flash and applied immediately.
+    </p>
+    <div style="max-width: 320px;">
       <label>
         Chint DDSU666 Slave ID (Default: 2)
-        <input type="number" x-model.number="inputSlave" min="1" max="247" style="margin-top: 0.5rem;">
+        <input type="number" x-model.number="inputSlave" min="1" max="247" style="margin-top: 0.4rem;">
       </label>
-      <small style="color: var(--pico-muted-color); display: block; margin-top: 0.25rem;">
-        Saved to ESP32 NVS flash and applied immediately.
-      </small>
-      <footer style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
-        <button class="secondary outline" @click="closeModal()" style="width: auto; margin-bottom: 0;">Cancel</button>
+      <div style="display: flex; gap: 0.75rem; margin-top: 1rem;">
         <button @click="saveSettings()" style="width: auto; margin-bottom: 0;">Save &amp; Apply</button>
-      </footer>
-    </article>
-  </dialog>
+        <button class="outline secondary" @click="resetSlaveInput()" style="width: auto; margin-bottom: 0;">Reset</button>
+      </div>
+    </div>
+  </article>
+
+  <!-- Tab 3: Firmware OTA & Device Control -->
+  <article x-show="activeTab === 'ota'">
+    <div class="card-heading">📦 Wireless Web OTA Update &amp; Device Control</div>
+    <p style="font-size: 0.8rem; color: var(--pico-muted-color); margin-bottom: 1rem;">
+      Upload compiled .bin firmware directly to flash memory over Wi-Fi.
+    </p>
+    <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
+      <a href="/update" role="button" class="contrast" style="width: auto; margin-bottom: 0;">Open Web OTA Upload Page ↗</a>
+      <button class="outline secondary" @click="rebootDevice()" style="width: auto; margin-bottom: 0; color: var(--rose); border-color: var(--rose);">Reboot Device</button>
+    </div>
+  </article>
 
   <footer style="text-align: center; font-size: 0.8rem; color: var(--pico-muted-color); margin-top: 2rem;">
     Chint DDSU666 Modbus RTU Reader &bull; WebSocket Stream on Port 81 &bull; Health API: <a href="/health">/health</a>
@@ -389,6 +405,7 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     function chintReaderApp() {
       return {
         liveMode: localStorage.getItem('chint_live_mode') !== 'false',
+        activeTab: 'diag',
         connState: 'live',
         meterOnline: true,
         telemetry: { watts: 0, volts: 0, amps: 0, pf: 1, freq: 50, import_kwh: 0, export_kwh: 0 },
@@ -396,7 +413,6 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         websocket: { clients: 0, packets_sent: 0 },
         uptime_sec: 0,
         wifi: { rssi: 0 },
-        modalOpen: false,
         inputSlave: 2,
         copyBtnText: "📋 Copy Diagnostics",
         packetFlash: false,
@@ -702,7 +718,10 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
 
           if (d.poll_hz !== undefined) this.modbus.rate_hz = d.poll_hz;
           if (d.latency_ms !== undefined) this.modbus.latency_ms = d.latency_ms;
-          if (d.slave_id !== undefined) this.modbus.slave_id = d.slave_id;
+          if (d.slave_id !== undefined) {
+            this.modbus.slave_id = d.slave_id;
+            this.inputSlave = d.slave_id;
+          }
           if (d.meter_online !== undefined) this.meterOnline = d.meter_online;
         },
 
@@ -732,6 +751,7 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
               if (data.modbus) {
                 this.modbus = Object.assign({}, this.modbus, data.modbus);
                 if (data.modbus.meter_online !== undefined) this.meterOnline = data.modbus.meter_online;
+                if (data.modbus.slave_id !== undefined && !this.inputSlave) this.inputSlave = data.modbus.slave_id;
               }
               if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
                 if (data.telemetry) this.applyTelemetry(data.telemetry);
@@ -741,33 +761,21 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             });
         },
 
-        openModal() {
+        resetSlaveInput() {
           this.inputSlave = this.modbus.slave_id || 2;
-          this.modalOpen = true;
-          fetch('/health').then(r => r.json()).then(d => {
-            if (d && d.modbus && d.modbus.slave_id) {
-              this.inputSlave = d.modbus.slave_id;
-            }
-          }).catch(e => {});
-        },
-
-        closeModal() {
-          this.modalOpen = false;
         },
 
         saveSettings() {
           const slave = parseInt(this.inputSlave, 10);
           if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             this.ws.send(JSON.stringify({ action: 'set_slave', slave: slave }));
-            this.closeModal();
             setTimeout(() => this.pollHealth(), 500);
           } else {
             fetch('/api/settings?slave=' + slave, { method: 'POST' })
               .then(r => r.json())
               .then(d => {
-                this.closeModal();
                 this.pollHealth();
-              }).catch(e => this.closeModal());
+              }).catch(e => {});
           }
         },
 

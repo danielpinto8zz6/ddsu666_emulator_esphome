@@ -124,11 +124,17 @@
       animation: packet-pulse 0.18s ease-out;
     }
     .val-display {
-      font-size: 2rem;
-      font-weight: 700;
+      font-size: 2.2rem;
+      font-weight: 800;
       color: var(--pico-color);
       line-height: 1.1;
-      margin: 0.4rem 0;
+      margin: 0.35rem 0;
+    }
+    .val-unit {
+      font-size: 1.1rem;
+      font-weight: 500;
+      color: var(--pico-muted-color);
+      margin-left: 0.25rem;
     }
     /* Bidirectional Power Flow Gauge */
     .flow-gauge-wrap {
@@ -208,11 +214,27 @@
     }
     /* Canvas waveform container */
     .chart-box {
-      margin-top: 1rem;
+      margin-top: 0.75rem;
       background: rgba(0, 0, 0, 0.25);
       border: 1px solid var(--pico-muted-border-color);
       border-radius: 8px;
       padding: 0.5rem;
+    }
+    /* Tabbed navigation */
+    .tab-bar {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+      border-bottom: 1px solid var(--pico-muted-border-color);
+      padding-bottom: 0.5rem;
+      overflow-x: auto;
+    }
+    .tab-btn {
+      padding: 0.35rem 0.85rem !important;
+      font-size: 0.82rem !important;
+      margin-bottom: 0 !important;
+      border-radius: 6px !important;
+      white-space: nowrap;
     }
   </style>
 </head>
@@ -229,6 +251,9 @@
     <div class="header-title">
       <h1>DDSU666 Modbus Emulator</h1>
       <small>Zero-Export Real-Time Energy Bridge &bull; Dual Slave ID 2 (Grid) + 1 (PV)</small>
+      <div style="margin-top: 0.4rem;">
+        <span class="badge badge-accent">🏠 Estimated House Load: <strong style="margin-left: 3px;" x-text="houseLoadWatts + ' W'"></strong></span>
+      </div>
     </div>
     <div class="header-actions">
       <button class="outline" :class="liveMode ? 'contrast' : 'secondary'" @click="toggleLiveMode()" style="padding: 0.3rem 0.75rem; font-size: 0.82rem; margin-bottom: 0;">
@@ -240,15 +265,18 @@
     </div>
   </header>
 
-  <!-- Top Metrics Grid -->
+  <!-- Top Hero Power Cards: Grid Net Power ⟷ Solar Generation -->
   <div class="grid">
-    <!-- Grid Active Power & Flow Gauge -->
+    <!-- Hero 1: Grid Net Power -->
     <article>
       <div class="card-heading">
-        <span>⚡ Grid Active Power</span>
-        <small :style="{ color: gridFlowColor }" x-text="gridFlowText"></small>
+        <span>⚡ Grid Net Power</span>
+        <span class="badge" :class="gridSourceBadgeClass" x-text="gridSourceBadgeText"></span>
       </div>
-      <div class="val-display" x-text="gridWattsDisplay"></div>
+      <div class="val-display">
+        <span x-text="gridWattsDisplay"></span><span class="val-unit">W</span>
+      </div>
+      <small :style="{ color: gridFlowColor }" x-text="gridFlowText"></small>
       
       <!-- Bidirectional Flow Gauge (Export ⟷ Import) -->
       <div class="flow-gauge-wrap">
@@ -264,17 +292,35 @@
       </div>
     </article>
 
-    <!-- PV Solar Power -->
+    <!-- Hero 2: PV Solar Power -->
     <article>
-      <div class="card-heading">☀️ PV Solar Power</div>
-      <div class="val-display" x-text="pvWattsDisplay"></div>
-      <small style="color: var(--pico-muted-color);" x-text="'Total Yield: ' + (pv.yield_kwh ? pv.yield_kwh.toFixed(2) : '0.00') + ' kWh'"></small>
-      <div style="margin-top: 0.75rem;">
+      <div class="card-heading">
+        <span>☀️ PV Solar Power</span>
         <span class="badge" :class="pvSourceBadgeClass" x-text="pvSourceBadgeText"></span>
       </div>
+      <div class="val-display">
+        <span x-text="pvWattsDisplay"></span><span class="val-unit">W</span>
+      </div>
+      <small style="color: var(--pico-muted-color);" x-text="'Total Yield: ' + (pv.yield_kwh ? pv.yield_kwh.toFixed(2) : '0.00') + ' kWh'"></small>
+      <div style="margin-top: 0.85rem; font-size: 0.84rem; color: var(--pico-muted-color);">
+        <span>Solar Provider: </span><strong style="color: var(--pico-color);" x-text="opendtu.mqtt_connected ? 'OpenDTU-onBattery (MQTT)' : 'Standby / Offline'"></strong>
+      </div>
     </article>
+  </div>
 
-    <!-- Grid Electricals -->
+  <!-- Real-Time 60-Second Power Waveform Card -->
+  <article>
+    <div class="card-heading">
+      <span>📈 Real-Time 60-Second Grid Power Waveform</span>
+      <small style="color: var(--pico-muted-color);">1s Sampling &bull; Dotted Center Zero Line</small>
+    </div>
+    <div class="chart-box">
+      <canvas id="power-chart" width="800" height="110" style="width: 100%; height: 110px; display: block;"></canvas>
+    </div>
+  </article>
+
+  <!-- Secondary Metrics: Electricals & Energy Accumulators Strip -->
+  <div class="grid">
     <article>
       <div class="card-heading">🔌 Grid Electricals</div>
       <div class="status-row"><span>Voltage</span><strong x-text="(grid.volts ? grid.volts.toFixed(1) : '--') + ' V'"></strong></div>
@@ -283,120 +329,99 @@
       <div class="status-row"><span>Frequency</span><strong x-text="(grid.freq ? grid.freq.toFixed(1) : '--') + ' Hz'"></strong></div>
     </article>
 
-    <!-- Energy Accumulators -->
     <article>
       <div class="card-heading">📊 Energy Accumulators</div>
       <div class="status-row"><span>Total Import</span><strong x-text="(grid.import_kwh ? grid.import_kwh.toFixed(2) : '--') + ' kWh'"></strong></div>
       <div class="status-row"><span>Total Export</span><strong x-text="(grid.export_kwh ? grid.export_kwh.toFixed(2) : '--') + ' kWh'"></strong></div>
-      <div class="status-row"><span>NVS Storage</span><strong style="color: var(--emerald);">Active</strong></div>
+      <div class="status-row"><span>NVS Storage</span><strong style="color: var(--emerald);">Active (Flash)</strong></div>
+      <div class="status-row"><span>Inverter Slave Mode</span><strong style="color: var(--accent);">Slave ID 2 + ID 1</strong></div>
     </article>
   </div>
 
-  <!-- Real-Time 60-Second Power Waveform Card -->
-  <article>
-    <div class="card-heading">
-      <span>📈 Real-Time 60-Second Grid Power Waveform</span>
-      <small style="color: var(--pico-muted-color);">Sampling @ 1s &bull; Auto-scaled</small>
-    </div>
-    <div class="chart-box">
-      <canvas id="power-chart" width="800" height="110" style="width: 100%; height: 110px; display: block;"></canvas>
-    </div>
-  </article>
+  <!-- Operational Controls & Telemetry Links Split -->
+  <div class="grid">
+    <!-- Left Card: Active Inverter Strategy & Operating Controls -->
+    <article>
+      <div class="card-heading">🎛️ Inverter Strategy &amp; Operating Controls</div>
 
-  <!-- System Diagnostics & Controls -->
-  <article>
-    <div class="card-heading">
-      <span>🩺 System Diagnostics &amp; Controls</span>
-      <button class="outline secondary btn-xs" @click="copyDiagnostics()" x-text="copyBtnText"></button>
-    </div>
+      <div class="status-row" style="align-items: center;">
+        <div>
+          <span>Grid Source Priority</span>
+          <div style="font-size: 0.75rem; color: var(--pico-muted-color);">Auto failover: Chint &rarr; Shelly</div>
+        </div>
+        <select x-model.number="priorityMode" @change="setPriority($event.target.value)" style="width: auto; max-width: 220px; font-size: 0.8rem; padding: 0.25rem 0.5rem;">
+          <option value="0">Auto: Chint &rarr; Shelly (Default)</option>
+          <option value="1">Auto: Shelly &rarr; Chint</option>
+          <option value="2">Chint WS Only</option>
+          <option value="3">Shelly WS Only</option>
+        </select>
+      </div>
 
-    <div class="status-row" style="align-items: center;">
-      <span>⚙️ Grid Source Priority</span>
-      <select x-model.number="priorityMode" @change="setPriority($event.target.value)" style="width: auto; max-width: 320px; font-size: 0.8rem; padding: 0.25rem 0.6rem;">
-        <option value="0">Auto: Chint WS → Shelly WS (Default)</option>
-        <option value="1">Auto: Shelly WS → Chint WS</option>
-        <option value="2">Chint WS Only</option>
-        <option value="3">Shelly WS Only</option>
-      </select>
-    </div>
+      <div class="status-row" style="align-items: center;">
+        <div>
+          <span>PV Source Priority</span>
+          <div style="font-size: 0.75rem; color: var(--pico-muted-color);">Solar telemetry provider</div>
+        </div>
+        <select x-model.number="pvPriorityMode" @change="setPvPriority($event.target.value)" style="width: auto; max-width: 220px; font-size: 0.8rem; padding: 0.25rem 0.5rem;">
+          <option value="0">OpenDTU MQTT (Default)</option>
+          <option value="1">Disabled / Standby</option>
+        </select>
+      </div>
 
-    <div class="status-row" style="align-items: center;">
-      <span>☀️ PV Source Priority</span>
-      <select x-model.number="pvPriorityMode" @change="setPvPriority($event.target.value)" style="width: auto; max-width: 320px; font-size: 0.8rem; padding: 0.25rem 0.6rem;">
-        <option value="0">OpenDTU Solar PV via MQTT (Default)</option>
-        <option value="1">Disabled / Standby</option>
-      </select>
-    </div>
+      <div class="status-row" style="align-items: center;">
+        <div>
+          <span>Power Filter Strategy</span>
+          <div style="font-size: 0.75rem; color: var(--pico-muted-color);">Smoothing algorithm</div>
+        </div>
+        <select x-model="filterMode" @change="setFilterMode($event.target.value)" style="width: auto; max-width: 220px; font-size: 0.8rem; padding: 0.25rem 0.5rem;">
+          <option value="damped">Multi-Zone Damped</option>
+          <option value="raw">Raw Pass-Through (0ms)</option>
+        </select>
+      </div>
+    </article>
 
-    <div class="status-row" style="align-items: center;">
-      <span>🎛️ Power Filter Strategy</span>
-      <select x-model="filterMode" @change="setFilterMode($event.target.value)" style="width: auto; max-width: 320px; font-size: 0.8rem; padding: 0.25rem 0.6rem;">
-        <option value="damped">Multi-Zone Damped (Zero-Export Stable)</option>
-        <option value="raw">Raw Pass-Through (0ms Latency)</option>
-      </select>
-    </div>
+    <!-- Right Card: Telemetry Providers & Modbus Bus Health -->
+    <article>
+      <div class="card-heading">
+        <span>🔗 Telemetry Providers &amp; Bus Health</span>
+        <button class="outline secondary btn-xs" @click="copyDiagnostics()" x-text="copyBtnText"></button>
+      </div>
+      <div class="status-row">
+        <span>Chint Master (XIAO ESP32-S3)</span>
+        <span class="badge" :class="chintBadgeClass" x-text="chintBadgeText"></span>
+      </div>
+      <div class="status-row">
+        <span>Shelly Pro EM (Fallback WS)</span>
+        <span class="badge" :class="shellyBadgeClass" x-text="shellyBadgeText"></span>
+      </div>
+      <div class="status-row">
+        <span>PV Solar (OpenDTU MQTT)</span>
+        <span class="badge" :class="opendtuBadgeClass" x-text="opendtuBadgeText"></span>
+      </div>
+      <div class="status-row">
+        <span>Hoymiles Inverter Link</span>
+        <span class="badge" :class="inverterBadgeClass" x-text="inverterBadgeText"></span>
+      </div>
+      <div class="status-row">
+        <span>Modbus Query Rate &amp; CRC</span>
+        <strong x-text="modbusQueriesText"></strong>
+      </div>
+      <div class="status-row">
+        <span>RS485 Bus &amp; Wi-Fi RSSI</span>
+        <span x-text="(modbus.rs485_active ? 'ACTIVE' : 'OFF') + ' • ' + (wifi.rssi || 0) + ' dBm (' + (wifi.ip || '--') + ')'"></span>
+      </div>
+    </article>
+  </div>
 
-    <div class="status-row">
-      <span>Active Grid Source</span>
-      <span class="badge" :class="gridSourceBadgeClass" x-text="gridSourceBadgeText"></span>
-    </div>
+  <!-- Bottom Utility Maintenance Section: Tabbed Navigation -->
+  <nav class="tab-bar">
+    <button class="tab-btn" :class="activeTab === 'events' ? 'contrast' : 'outline secondary'" @click="activeTab = 'events'">🔀 Transition Log</button>
+    <button class="tab-btn" :class="activeTab === 'settings' ? 'contrast' : 'outline secondary'" @click="activeTab = 'settings'">⚙️ Network &amp; Connection Settings</button>
+    <button class="tab-btn" :class="activeTab === 'ota' ? 'contrast' : 'outline secondary'" @click="activeTab = 'ota'">📦 Firmware OTA &amp; Device Control</button>
+  </nav>
 
-    <div class="status-row">
-      <span>Active PV Source</span>
-      <span class="badge" :class="pvSourceBadgeClass" x-text="pvSourceBadgeText"></span>
-    </div>
-
-    <div class="status-row">
-      <span>Chint Master (XIAO ESP32-S3)</span>
-      <span class="badge" :class="chintBadgeClass" x-text="chintBadgeText"></span>
-    </div>
-
-    <div class="status-row">
-      <span>Shelly Pro EM (Fallback WS)</span>
-      <span class="badge" :class="shellyBadgeClass" x-text="shellyBadgeText"></span>
-    </div>
-
-    <div class="status-row">
-      <span>PV Solar (OpenDTU MQTT)</span>
-      <span class="badge" :class="opendtuBadgeClass" x-text="opendtuBadgeText"></span>
-    </div>
-
-    <div class="status-row">
-      <span>Hoymiles Inverter Link</span>
-      <span class="badge" :class="inverterBadgeClass" x-text="inverterBadgeText"></span>
-    </div>
-
-    <div class="status-row">
-      <span>Modbus Queries Answered</span>
-      <strong x-text="modbusQueriesText"></strong>
-    </div>
-
-    <div class="status-row">
-      <span>Modbus Query Breakdown</span>
-      <span style="font-size: 0.85rem; color: var(--pico-muted-color);">
-        <span style="color: var(--accent);">Grid (ID 2):</span> <strong x-text="modbus.queries_grid ? modbus.queries_grid.toLocaleString() : '0'"></strong> &bull;
-        <span style="color: var(--emerald);">PV (ID 1):</span> <strong x-text="modbus.queries_pv ? modbus.queries_pv.toLocaleString() : '0'"></strong>
-      </span>
-    </div>
-
-    <div class="status-row">
-      <span>RS485 Transceiver</span>
-      <span class="badge" :class="modbus.rs485_active ? 'badge-ok' : 'badge-err'" x-text="modbus.rs485_active ? 'ACTIVE (BUS ENABLED)' : 'SAFE MODE (OFF)'"></span>
-    </div>
-
-    <div class="status-row">
-      <span>Wi-Fi Signal &amp; IP</span>
-      <span x-text="(wifi.ip || '--') + ' (' + (wifi.rssi || 0) + ' dBm)'"></span>
-    </div>
-
-    <div class="status-row">
-      <span>Uptime / Heap / Net Stack</span>
-      <span x-text="uptimeHeapText"></span>
-    </div>
-  </article>
-
-  <!-- Transition Events Log -->
-  <article>
+  <!-- Tab 1: Source Transition Event Log -->
+  <article x-show="activeTab === 'events'">
     <div class="card-heading">🔀 Grid Source Transition Log</div>
     <template x-if="sourceEvents.length === 0">
       <small style="color: var(--pico-muted-color);">No transitions recorded yet.</small>
@@ -411,74 +436,72 @@
     </template>
   </article>
 
-  <!-- Settings Panel (Collapsible via HTML5 details) -->
-  <details :open="settingsOpen" @toggle="onSettingsToggle($event)">
-    <summary role="button" class="outline contrast" style="margin-bottom: 1rem;">⚙️ Network &amp; Connection Settings</summary>
-    <article>
-      <p style="font-size: 0.8rem; color: var(--pico-muted-color); margin-bottom: 1rem;">
-        Changes are saved to NVS and take effect after reboot. Current compile-time defaults are shown as placeholders.
-      </p>
-      <div class="grid">
-        <label>
-          WiFi SSID
-          <input type="text" x-model="config.wifi_ssid" placeholder="YourWiFiSSID" autocomplete="off">
-        </label>
-        <label>
-          WiFi Password
-          <input type="password" x-model="config.wifi_pass" placeholder="(unchanged)" autocomplete="new-password">
-        </label>
-      </div>
+  <!-- Tab 2: Network & Connection Settings -->
+  <article x-show="activeTab === 'settings'" x-init="$watch('activeTab', tab => { if (tab === 'settings') loadConfig(); })">
+    <div class="card-heading">⚙️ Network &amp; Connection Settings</div>
+    <p style="font-size: 0.8rem; color: var(--pico-muted-color); margin-bottom: 1rem;">
+      Saved to NVS flash and applied upon reboot. Compile-time defaults shown as placeholders.
+    </p>
+    <div class="grid">
+      <label>
+        WiFi SSID
+        <input type="text" x-model="config.wifi_ssid" placeholder="YourWiFiSSID" autocomplete="off">
+      </label>
+      <label>
+        WiFi Password
+        <input type="password" x-model="config.wifi_pass" placeholder="(unchanged)" autocomplete="new-password">
+      </label>
+    </div>
 
-      <div class="grid">
-        <label>
-          Chint XIAO IP
-          <input type="text" x-model="config.chint_ip" placeholder="10.0.0.197" autocomplete="off">
-        </label>
-        <label>
-          Shelly Pro EM IP
-          <input type="text" x-model="config.shelly_ip" placeholder="10.0.0.187" autocomplete="off">
-        </label>
-      </div>
+    <div class="grid">
+      <label>
+        Chint XIAO IP
+        <input type="text" x-model="config.chint_ip" placeholder="10.0.0.197" autocomplete="off">
+      </label>
+      <label>
+        Shelly Pro EM IP
+        <input type="text" x-model="config.shelly_ip" placeholder="10.0.0.187" autocomplete="off">
+      </label>
+    </div>
 
-      <div class="grid">
-        <label>
-          MQTT Broker IP
-          <input type="text" x-model="config.mqtt_broker" placeholder="10.0.0.1" autocomplete="off">
-        </label>
-        <label>
-          MQTT Port
-          <input type="number" x-model.number="config.mqtt_port" placeholder="1883" min="1" max="65535">
-        </label>
-      </div>
+    <div class="grid">
+      <label>
+        MQTT Broker IP
+        <input type="text" x-model="config.mqtt_broker" placeholder="10.0.0.1" autocomplete="off">
+      </label>
+      <label>
+        MQTT Port
+        <input type="number" x-model.number="config.mqtt_port" placeholder="1883" min="1" max="65535">
+      </label>
+    </div>
 
-      <div class="grid">
-        <label>
-          MQTT Username
-          <input type="text" x-model="config.mqtt_user" placeholder="(none)" autocomplete="off">
-        </label>
-        <label>
-          MQTT Password
-          <input type="password" x-model="config.mqtt_pass" placeholder="(unchanged)" autocomplete="new-password">
-        </label>
-      </div>
+    <div class="grid">
+      <label>
+        MQTT Username
+        <input type="text" x-model="config.mqtt_user" placeholder="(none)" autocomplete="off">
+      </label>
+      <label>
+        MQTT Password
+        <input type="password" x-model="config.mqtt_pass" placeholder="(unchanged)" autocomplete="new-password">
+      </label>
+    </div>
 
-      <div class="grid">
-        <label>
-          OTA Password
-          <input type="password" x-model="config.ota_password" placeholder="admin" autocomplete="new-password">
-        </label>
-      </div>
+    <div class="grid">
+      <label>
+        OTA Password
+        <input type="password" x-model="config.ota_password" placeholder="admin" autocomplete="new-password">
+      </label>
+    </div>
 
-      <div style="display: flex; gap: 0.75rem; align-items: center; margin-top: 1rem; flex-wrap: wrap;">
-        <button @click="saveConfig()" style="width: auto; margin-bottom: 0;">💾 Save &amp; Reboot</button>
-        <button class="outline secondary" @click="loadConfig()" style="width: auto; margin-bottom: 0;">↺ Reload</button>
-        <small :style="{ color: configStatusColor }" x-text="configStatus"></small>
-      </div>
-    </article>
-  </details>
+    <div style="display: flex; gap: 0.75rem; align-items: center; margin-top: 1rem; flex-wrap: wrap;">
+      <button @click="saveConfig()" style="width: auto; margin-bottom: 0;">💾 Save &amp; Reboot</button>
+      <button class="outline secondary" @click="loadConfig()" style="width: auto; margin-bottom: 0;">↺ Reload</button>
+      <small :style="{ color: configStatusColor }" x-text="configStatus"></small>
+    </div>
+  </article>
 
-  <!-- Wireless Web OTA Update & Device Control -->
-  <article>
+  <!-- Tab 3: Wireless Web OTA & Device Control -->
+  <article x-show="activeTab === 'ota'">
     <div class="card-heading">📦 Wireless Web OTA Update &amp; Device Control</div>
     <div style="display: flex; gap: 0.75rem; align-items: center; margin-top: 0.75rem; flex-wrap: wrap;">
       <input type="file" id="bin-file" accept=".bin" style="width: auto; margin-bottom: 0;">
@@ -498,6 +521,7 @@
     function dashboardApp() {
       return {
         liveMode: localStorage.getItem("live_mode") !== "false",
+        activeTab: "events",
         connState: "live",
         status: "HEALTHY",
         grid: { watts: 0, volts: 0, amps: 0, pf: 0, freq: 0, import_kwh: 0, export_kwh: 0, source: "NONE", filter: "damped" },
@@ -514,7 +538,6 @@
         pvPriorityMode: 0,
         filterMode: "damped",
         sourceEvents: [],
-        settingsOpen: false,
         config: { wifi_ssid: "", wifi_pass: "", chint_ip: "", shelly_ip: "", mqtt_broker: "", mqtt_port: 1883, mqtt_user: "", mqtt_pass: "", ota_password: "" },
         configStatus: "",
         configStatusColor: "",
@@ -535,7 +558,6 @@
         flashTimer: null,
 
         init() {
-          // Initialize canvas size to match container
           this.$nextTick(() => {
             this.resizeCanvas();
             window.addEventListener("resize", () => { this.resizeCanvas(); this.drawChart(); });
@@ -568,6 +590,12 @@
         },
 
         // --- Computed Properties ---
+        get houseLoadWatts() {
+          const gw = this.grid ? (this.grid.watts || 0) : 0;
+          const pv = this.pv ? (this.pv.watts || 0) : 0;
+          const load = pv + gw;
+          return Math.max(0, load).toFixed(0);
+        },
         get connBadgeClass() {
           if (!this.liveMode || this.connState === "paused") return "badge-muted";
           if (this.connState === "live") return "badge-accent";
@@ -587,7 +615,7 @@
         },
         get gridWattsDisplay() {
           const w = this.grid.watts || 0;
-          return Math.abs(w).toFixed(1) + " W";
+          return Math.abs(w).toFixed(1);
         },
         get gridFlowColor() {
           const w = this.grid.watts || 0;
@@ -603,7 +631,7 @@
         },
         get flowGaugeStyle() {
           const w = this.grid.watts || 0;
-          const maxW = 4000; // 4 kW reference scale
+          const maxW = 4000;
           const clamped = Math.max(-maxW, Math.min(maxW, w));
           const pct = (Math.abs(clamped) / maxW) * 50;
           if (w >= 0) {
@@ -622,7 +650,7 @@
         },
         get pvWattsDisplay() {
           const w = this.pv.watts || 0;
-          return w.toFixed(1) + " W";
+          return w.toFixed(1);
         },
         get gridSourceBadgeClass() {
           if (this.grid.source === "CHINT_WS") return "badge-ok";
@@ -769,6 +797,7 @@
           const text = [
             `=== DDSU666 Emulator Diagnostics (${d}) ===`,
             `Status: ${this.status} | Uptime: ${Math.floor(this.uptime_sec / 60)} min | Free Heap: ${Math.floor(this.free_heap / 1024)} KB`,
+            `Estimated House Load: ${this.houseLoadWatts} W`,
             `Grid Power: ${this.grid.watts.toFixed(1)} W (${this.grid.watts > 0 ? 'IMPORT' : 'EXPORT'}) | ${this.grid.volts.toFixed(1)} V | ${this.grid.amps.toFixed(2)} A | PF: ${this.grid.pf.toFixed(2)}`,
             `PV Power: ${this.pv.watts.toFixed(1)} W | Yield: ${this.pv.yield_kwh.toFixed(2)} kWh`,
             `Active Sources: Grid=${this.grid.source} | PV=${this.pv.source}`,
@@ -964,7 +993,6 @@
           if (d.status) this.status = d.status;
           if (d.grid) {
             this.grid = Object.assign({}, this.grid, d.grid);
-            // Append to power rolling waveform (throttled to ~1 sample per second)
             const now = Date.now();
             if (now - this.lastSampleTime >= 900) {
               this.lastSampleTime = now;
@@ -988,11 +1016,6 @@
           if (d.pv_priority && d.pv_priority.mode !== undefined) this.pvPriorityMode = d.pv_priority.mode;
           if (d.grid && d.grid.filter) this.filterMode = d.grid.filter;
           if (d.source_events) this.sourceEvents = d.source_events;
-        },
-
-        onSettingsToggle(event) {
-          this.settingsOpen = event.target.open;
-          if (this.settingsOpen) this.loadConfig();
         },
 
         async loadConfig() {
