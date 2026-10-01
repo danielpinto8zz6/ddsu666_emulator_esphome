@@ -1,787 +1,834 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DDSU666 Modbus Emulator</title>
+  <!-- Pico.css Minimal/Semantic CSS Framework via CDN -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <!-- Alpine.js Lightweight Reactive UI Library via CDN -->
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <style>
     :root {
-      --bg: #090d16;
-      --card-bg: rgba(19, 27, 46, 0.7);
-      --border: rgba(255, 255, 255, 0.08);
-      --text: #f8fafc;
-      --text-dim: #94a3b8;
-      --accent: #38bdf8;
+      --pico-font-size: 92%;
       --emerald: #10b981;
       --amber: #f59e0b;
       --rose: #f43f5e;
+      --accent: #38bdf8;
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
-    body { background: var(--bg); color: var(--text); padding: 20px; max-width: 960px; margin: 0 auto; min-height: 100vh; }
-    header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 24px; }
-    .badge { padding: 4px 12px; border-radius: 9999px; font-weight: 600; font-size: 0.85rem; }
-    .badge-ok { background: rgba(16, 185, 129, 0.2); color: var(--emerald); border: 1px solid var(--emerald); }
-    .badge-warn { background: rgba(245, 158, 11, 0.2); color: var(--amber); border: 1px solid var(--amber); }
-    .badge-err { background: rgba(244, 63, 94, 0.2); color: var(--rose); border: 1px solid var(--rose); }
-    .badge-accent { background: rgba(56, 189, 248, 0.2); color: var(--accent); border: 1px solid var(--accent); }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 24px; }
-    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px; backdrop-filter: blur(8px); }
-    .card-title { font-size: 0.85rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
-    .val { font-size: 2rem; font-weight: 700; color: #fff; }
-    .val-sub { font-size: 0.9rem; color: var(--text-dim); margin-top: 4px; }
-    .status-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
-    .status-row:last-child { border-bottom: none; }
-    .btn { background: #0284c7; color: #fff; padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; transition: background 0.2s; }
-    .btn:hover { background: #0369a1; }
-    .btn-sm { padding: 5px 12px; font-size: 0.82rem; }
-    .btn-success { background: rgba(16,185,129,0.2); border: 1px solid var(--emerald); color: var(--emerald); }
-    .btn-success:hover { background: rgba(16,185,129,0.35); }
-    .btn-danger { background: rgba(239, 68, 68, 0.15); border: 1px solid var(--rose); color: var(--rose); padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 600; transition: background 0.2s; }
-    .btn-danger:hover { background: rgba(239, 68, 68, 0.3); }
-    .btn-live-on { background: rgba(16, 185, 129, 0.15); color: var(--emerald); border: 1px solid rgba(16, 185, 129, 0.4); display: inline-flex; align-items: center; gap: 6px; }
-    .btn-live-on:hover { background: rgba(16, 185, 129, 0.25); }
-    .btn-live-off { background: rgba(148, 163, 184, 0.12); color: var(--text-dim); border: 1px solid rgba(148, 163, 184, 0.3); display: inline-flex; align-items: center; gap: 6px; }
-    .btn-live-off:hover { background: rgba(148, 163, 184, 0.2); color: var(--text); }
-    .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--emerald); box-shadow: 0 0 6px var(--emerald); display: inline-block; }
-    .live-dot.paused { background: var(--text-dim); box-shadow: none; }
-    input[type=file] { color: var(--text-dim); font-size: 0.85rem; }
-    /* Settings panel */
-    .settings-toggle { width: 100%; background: none; border: 1px solid var(--border); border-radius: 8px; color: var(--text-dim); padding: 10px 16px; font-size: 0.88rem; cursor: pointer; display: flex; justify-content: space-between; align-items: center; margin-bottom: 0; transition: border-color 0.2s; }
-    .settings-toggle:hover { border-color: var(--accent); color: var(--accent); }
-    .settings-panel { display: none; background: var(--card-bg); border: 1px solid var(--border); border-top: none; border-radius: 0 0 12px 12px; padding: 20px; backdrop-filter: blur(8px); margin-bottom: 24px; }
-    .settings-panel.open { display: block; }
-    .settings-toggle.open { border-radius: 12px 12px 0 0; border-color: var(--accent); color: var(--accent); }
-    .cfg-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 16px; }
-    .cfg-field label { display: block; font-size: 0.78rem; color: var(--text-dim); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
-    .cfg-field input { width: 100%; background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 7px 10px; font-size: 0.88rem; outline: none; transition: border-color 0.2s; }
-    .cfg-field input:focus { border-color: var(--accent); }
-    .cfg-note { font-size: 0.78rem; color: var(--text-dim); margin-bottom: 12px; }
-    .cfg-actions { display: flex; gap: 10px; align-items: center; }
-    .cfg-status { font-size: 0.82rem; color: var(--text-dim); }
-    /* Source events log */
-    .event-row { display: flex; gap: 10px; padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.82rem; }
-    .event-row:last-child { border-bottom: none; }
-    .event-t { color: var(--text-dim); min-width: 60px; }
-    footer { text-align: center; color: var(--text-dim); font-size: 0.8rem; margin-top: 32px; }
+    body {
+      padding-top: 1.5rem;
+      padding-bottom: 3rem;
+    }
+    .header-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+      border-bottom: 1px solid var(--pico-muted-border-color);
+      padding-bottom: 1rem;
+    }
+    .header-title h1 {
+      margin-bottom: 0.15rem;
+      font-size: 1.5rem;
+    }
+    .header-title small {
+      color: var(--pico-muted-color);
+    }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.25rem 0.65rem;
+      border-radius: 9999px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    .badge-ok {
+      background: rgba(16, 185, 129, 0.18);
+      color: var(--emerald);
+      border: 1px solid var(--emerald);
+    }
+    .badge-warn {
+      background: rgba(245, 158, 11, 0.18);
+      color: var(--amber);
+      border: 1px solid var(--amber);
+    }
+    .badge-err {
+      background: rgba(244, 63, 94, 0.18);
+      color: var(--rose);
+      border: 1px solid var(--rose);
+    }
+    .badge-accent {
+      background: rgba(56, 189, 248, 0.18);
+      color: var(--accent);
+      border: 1px solid var(--accent);
+    }
+    .badge-muted {
+      background: rgba(148, 163, 184, 0.12);
+      color: var(--pico-muted-color);
+      border: 1px solid rgba(148, 163, 184, 0.25);
+    }
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--emerald);
+      box-shadow: 0 0 6px var(--emerald);
+      display: inline-block;
+    }
+    .live-dot.paused {
+      background: var(--pico-muted-color);
+      box-shadow: none;
+    }
+    .val-display {
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--pico-color);
+      line-height: 1.1;
+      margin: 0.4rem 0;
+    }
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.4rem 0;
+      border-bottom: 1px solid var(--pico-muted-border-color);
+      font-size: 0.88rem;
+    }
+    .status-row:last-child {
+      border-bottom: none;
+    }
+    .event-row {
+      display: flex;
+      gap: 0.75rem;
+      padding: 0.35rem 0;
+      border-bottom: 1px solid var(--pico-muted-border-color);
+      font-size: 0.82rem;
+    }
+    .event-row:last-child {
+      border-bottom: none;
+    }
+    .card-heading {
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--pico-muted-color);
+      margin-bottom: 0.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    article {
+      margin-bottom: 1.25rem;
+      padding: 1.25rem;
+      border: 1px solid var(--pico-muted-border-color);
+    }
+    select, input {
+      margin-bottom: 0;
+    }
   </style>
 </head>
-<body>
-  <header>
-    <div>
-      <h1 style="font-size: 1.4rem;">DDSU666 Modbus Emulator</h1>
-      <p style="color: var(--text-dim); font-size: 0.85rem;">Zero-Export Real-Time Energy Bridge</p>
+<body class="container" x-data="dashboardApp()" x-init="init()">
+  <!-- Header -->
+  <header class="header-bar">
+    <div class="header-title">
+      <h1>DDSU666 Modbus Emulator</h1>
+      <small>Zero-Export Real-Time Energy Bridge &bull; Pico + Alpine</small>
     </div>
-    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-      <button id="live-toggle-btn" class="btn btn-sm btn-live-on" onclick="toggleLiveMode()" title="Toggle real-time updates">
-        <span id="live-dot" class="live-dot"></span> <span id="live-text">Live: ON</span>
+    <div class="header-actions">
+      <button class="outline" :class="liveMode ? 'contrast' : 'secondary'" @click="toggleLiveMode()" style="padding: 0.3rem 0.75rem; font-size: 0.82rem; margin-bottom: 0;">
+        <span class="live-dot" :class="{ 'paused': !liveMode }"></span>
+        <span x-text="liveMode ? 'Live: ON' : 'Live: PAUSED'"></span>
       </button>
-      <div id="conn-badge" class="badge badge-accent">⚡ LIVE STREAM (WS 5Hz)</div>
-      <div id="sys-status" class="badge badge-ok">HEALTHY</div>
+      <span class="badge" :class="connBadgeClass" x-text="connBadgeText"></span>
+      <span class="badge" :class="sysStatusClass" x-text="status"></span>
     </div>
   </header>
 
+  <!-- Top Metrics Grid -->
   <div class="grid">
-    <div class="card">
-      <div class="card-title">⚡ Grid Active Power</div>
-      <div class="val" id="grid-w">-- W</div>
-      <div class="val-sub" id="grid-dir">Status: --</div>
-    </div>
+    <article>
+      <div class="card-heading">⚡ Grid Active Power</div>
+      <div class="val-display" x-text="gridWattsDisplay"></div>
+      <small :style="{ color: gridFlowColor }" x-text="gridFlowText"></small>
+    </article>
 
-    <div class="card">
-      <div class="card-title">☀️ PV Solar Power</div>
-      <div class="val" id="pv-w">-- W</div>
-      <div class="val-sub" id="pv-yield">Yield: -- kWh</div>
-    </div>
+    <article>
+      <div class="card-heading">☀️ PV Solar Power</div>
+      <div class="val-display" x-text="pvWattsDisplay"></div>
+      <small style="color: var(--pico-muted-color);" x-text="'Total Yield: ' + (pv.yield_kwh ? pv.yield_kwh.toFixed(2) : '0.00') + ' kWh'"></small>
+    </article>
 
-    <div class="card">
-      <div class="card-title">🔌 Grid Electricals</div>
-      <div class="status-row"><span>Voltage</span><strong id="grid-v">-- V</strong></div>
-      <div class="status-row"><span>Current</span><strong id="grid-c">-- A</strong></div>
-      <div class="status-row"><span>Power Factor</span><strong id="grid-pf">--</strong></div>
-      <div class="status-row"><span>Frequency</span><strong id="grid-f">-- Hz</strong></div>
-    </div>
+    <article>
+      <div class="card-heading">🔌 Grid Electricals</div>
+      <div class="status-row"><span>Voltage</span><strong x-text="(grid.volts ? grid.volts.toFixed(1) : '--') + ' V'"></strong></div>
+      <div class="status-row"><span>Current</span><strong x-text="(grid.amps ? grid.amps.toFixed(2) : '--') + ' A'"></strong></div>
+      <div class="status-row"><span>Power Factor</span><strong x-text="grid.pf ? grid.pf.toFixed(2) : '--'"></strong></div>
+      <div class="status-row"><span>Frequency</span><strong x-text="(grid.freq ? grid.freq.toFixed(1) : '--') + ' Hz'"></strong></div>
+    </article>
 
-    <div class="card">
-      <div class="card-title">📊 Energy Accumulators</div>
-      <div class="status-row"><span>Total Import</span><strong id="grid-imp">-- kWh</strong></div>
-      <div class="status-row"><span>Total Export</span><strong id="grid-exp">-- kWh</strong></div>
+    <article>
+      <div class="card-heading">📊 Energy Accumulators</div>
+      <div class="status-row"><span>Total Import</span><strong x-text="(grid.import_kwh ? grid.import_kwh.toFixed(2) : '--') + ' kWh'"></strong></div>
+      <div class="status-row"><span>Total Export</span><strong x-text="(grid.export_kwh ? grid.export_kwh.toFixed(2) : '--') + ' kWh'"></strong></div>
       <div class="status-row"><span>NVS Storage</span><strong style="color: var(--emerald);">Active</strong></div>
-    </div>
+    </article>
   </div>
 
-  <div class="card" style="margin-bottom: 24px;">
-    <div class="card-title">🩺 System Diagnostics &amp; Controls</div>
+  <!-- System Diagnostics & Controls -->
+  <article>
+    <div class="card-heading">🩺 System Diagnostics &amp; Controls</div>
+
     <div class="status-row" style="align-items: center;">
       <span>⚙️ Grid Source Priority</span>
-      <select id="grid-priority-select" onchange="setPriority(this.value)" style="background: rgba(255,255,255,0.06); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 4px 8px; font-size: 0.8rem; cursor: pointer; outline: none;">
+      <select x-model.number="priorityMode" @change="setPriority($event.target.value)" style="width: auto; max-width: 320px; font-size: 0.8rem; padding: 0.25rem 0.6rem;">
         <option value="0">Auto: Chint WS → Shelly WS (Default)</option>
         <option value="1">Auto: Shelly WS → Chint WS</option>
         <option value="2">Chint WS Only</option>
         <option value="3">Shelly WS Only</option>
       </select>
     </div>
+
     <div class="status-row" style="align-items: center;">
       <span>☀️ PV Source Priority</span>
-      <select id="pv-priority-select" onchange="setPvPriority(this.value)" style="background: rgba(255,255,255,0.06); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 4px 8px; font-size: 0.8rem; cursor: pointer; outline: none;">
+      <select x-model.number="pvPriorityMode" @change="setPvPriority($event.target.value)" style="width: auto; max-width: 320px; font-size: 0.8rem; padding: 0.25rem 0.6rem;">
         <option value="0">OpenDTU Solar PV via MQTT (Default)</option>
         <option value="1">Disabled / Standby</option>
       </select>
     </div>
+
     <div class="status-row" style="align-items: center;">
       <span>🎛️ Power Filter Strategy</span>
-      <select id="filter-mode-select" onchange="setFilterMode(this.value)" style="background: rgba(255,255,255,0.06); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 4px 8px; font-size: 0.8rem; cursor: pointer; outline: none;">
+      <select x-model="filterMode" @change="setFilterMode($event.target.value)" style="width: auto; max-width: 320px; font-size: 0.8rem; padding: 0.25rem 0.6rem;">
         <option value="damped">Multi-Zone Damped (Zero-Export Stable)</option>
         <option value="raw">Raw Pass-Through (0ms Latency)</option>
       </select>
     </div>
-    <div class="status-row"><span>Active Grid Source</span><span id="grid-source-badge" class="badge">--</span></div>
-    <div class="status-row"><span>Active PV Source</span><span id="pv-source-badge" class="badge">--</span></div>
-    <div class="status-row"><span>Chint Master (XIAO ESP32-S3)</span><span id="chint-ws-badge" class="badge">--</span></div>
-    <div class="status-row"><span>Shelly Pro EM (Fallback WS)</span><span id="shelly-ws-badge" class="badge">--</span></div>
-    <div class="status-row"><span>PV Solar (OpenDTU MQTT)</span><span id="opendtu-badge" class="badge">--</span></div>
-    <div class="status-row"><span>Hoymiles Inverter Link</span><span id="inverter-link-badge" class="badge">--</span></div>
-    <div class="status-row"><span>Modbus Queries Answered</span><strong id="modbus-queries">--</strong></div>
-    <div class="status-row"><span>Modbus Query Breakdown</span><span id="modbus-breakdown" style="font-size: 0.85rem; color: var(--text-dim);">--</span></div>
-    <div class="status-row"><span>RS485 Transceiver</span><span id="rs485-badge" class="badge">--</span></div>
-    <div class="status-row"><span>Wi-Fi Signal &amp; IP</span><span id="wifi-info">--</span></div>
-    <div class="status-row"><span>Uptime / Heap / Net Stack</span><span id="uptime-heap">--</span></div>
-  </div>
 
-  <!-- Source Events Log -->
-  <div class="card" style="margin-bottom: 24px;" id="events-card">
-    <div class="card-title">🔀 Grid Source Transition Log</div>
-    <div id="source-events-list" style="margin-top: 8px;">
-      <span style="color: var(--text-dim); font-size: 0.85rem;">No transitions recorded yet.</span>
+    <div class="status-row">
+      <span>Active Grid Source</span>
+      <span class="badge" :class="gridSourceBadgeClass" x-text="gridSourceBadgeText"></span>
     </div>
-  </div>
 
-  <!-- Settings Panel (collapsible) -->
-  <div style="margin-bottom: 24px;">
-    <button class="settings-toggle" id="settings-toggle-btn" onclick="toggleSettings()">
-      <span>⚙️ Network &amp; Connection Settings</span>
-      <span id="settings-arrow">▼</span>
-    </button>
-    <div class="settings-panel" id="settings-panel">
-      <p class="cfg-note">Changes are saved to NVS and take effect after reboot. Current compile-time defaults are shown as placeholders.</p>
-      <div class="cfg-grid">
-        <div class="cfg-field">
-          <label>WiFi SSID</label>
-          <input type="text" id="cfg-wifi-ssid" placeholder="YourWiFiSSID" autocomplete="off">
-        </div>
-        <div class="cfg-field">
-          <label>WiFi Password</label>
-          <input type="password" id="cfg-wifi-pass" placeholder="(unchanged)" autocomplete="new-password">
-        </div>
-        <div class="cfg-field">
-          <label>Chint XIAO IP</label>
-          <input type="text" id="cfg-chint-ip" placeholder="10.0.0.197" autocomplete="off">
-        </div>
-        <div class="cfg-field">
-          <label>Shelly Pro EM IP</label>
-          <input type="text" id="cfg-shelly-ip" placeholder="10.0.0.187" autocomplete="off">
-        </div>
-        <div class="cfg-field">
-          <label>MQTT Broker IP</label>
-          <input type="text" id="cfg-mqtt-broker" placeholder="10.0.0.1" autocomplete="off">
-        </div>
-        <div class="cfg-field">
-          <label>MQTT Port</label>
-          <input type="number" id="cfg-mqtt-port" placeholder="1883" min="1" max="65535">
-        </div>
-        <div class="cfg-field">
-          <label>MQTT Username</label>
-          <input type="text" id="cfg-mqtt-user" placeholder="(none)" autocomplete="off">
-        </div>
-        <div class="cfg-field">
-          <label>MQTT Password</label>
-          <input type="password" id="cfg-mqtt-pass" placeholder="(unchanged)" autocomplete="new-password">
-        </div>
-        <div class="cfg-field">
-          <label>OTA Password</label>
-          <input type="password" id="cfg-ota-pass" placeholder="admin" autocomplete="new-password">
-        </div>
+    <div class="status-row">
+      <span>Active PV Source</span>
+      <span class="badge" :class="pvSourceBadgeClass" x-text="pvSourceBadgeText"></span>
+    </div>
+
+    <div class="status-row">
+      <span>Chint Master (XIAO ESP32-S3)</span>
+      <span class="badge" :class="chintBadgeClass" x-text="chintBadgeText"></span>
+    </div>
+
+    <div class="status-row">
+      <span>Shelly Pro EM (Fallback WS)</span>
+      <span class="badge" :class="shellyBadgeClass" x-text="shellyBadgeText"></span>
+    </div>
+
+    <div class="status-row">
+      <span>PV Solar (OpenDTU MQTT)</span>
+      <span class="badge" :class="opendtuBadgeClass" x-text="opendtuBadgeText"></span>
+    </div>
+
+    <div class="status-row">
+      <span>Hoymiles Inverter Link</span>
+      <span class="badge" :class="inverterBadgeClass" x-text="inverterBadgeText"></span>
+    </div>
+
+    <div class="status-row">
+      <span>Modbus Queries Answered</span>
+      <strong x-text="modbusQueriesText"></strong>
+    </div>
+
+    <div class="status-row">
+      <span>Modbus Query Breakdown</span>
+      <span style="font-size: 0.85rem; color: var(--pico-muted-color);">
+        <span style="color: var(--accent);">Grid (ID 2):</span> <strong x-text="modbus.queries_grid ? modbus.queries_grid.toLocaleString() : '0'"></strong> &bull;
+        <span style="color: var(--emerald);">PV (ID 1):</span> <strong x-text="modbus.queries_pv ? modbus.queries_pv.toLocaleString() : '0'"></strong>
+      </span>
+    </div>
+
+    <div class="status-row">
+      <span>RS485 Transceiver</span>
+      <span class="badge" :class="modbus.rs485_active ? 'badge-ok' : 'badge-err'" x-text="modbus.rs485_active ? 'ACTIVE (BUS ENABLED)' : 'SAFE MODE (OFF)'"></span>
+    </div>
+
+    <div class="status-row">
+      <span>Wi-Fi Signal &amp; IP</span>
+      <span x-text="(wifi.ip || '--') + ' (' + (wifi.rssi || 0) + ' dBm)'"></span>
+    </div>
+
+    <div class="status-row">
+      <span>Uptime / Heap / Net Stack</span>
+      <span x-text="uptimeHeapText"></span>
+    </div>
+  </article>
+
+  <!-- Transition Events Log -->
+  <article>
+    <div class="card-heading">🔀 Grid Source Transition Log</div>
+    <template x-if="sourceEvents.length === 0">
+      <small style="color: var(--pico-muted-color);">No transitions recorded yet.</small>
+    </template>
+    <template x-for="ev in sourceEvents.slice().reverse()" :key="ev.t + '-' + ev.from + '-' + ev.to">
+      <div class="event-row">
+        <span style="color: var(--pico-muted-color); min-width: 60px;" x-text="formatTimeOffset(ev.t)"></span>
+        <span style="color: var(--pico-muted-color);" x-text="ev.from"></span>
+        <span style="color: var(--pico-muted-color);">&rarr;</span>
+        <strong :style="{ color: ev.to === 'NONE' ? 'var(--rose)' : (ev.to === 'CHINT_WS' ? 'var(--emerald)' : 'var(--amber)') }" x-text="ev.to"></strong>
       </div>
-      <div class="cfg-actions">
-        <button class="btn btn-sm" onclick="saveConfig()">💾 Save &amp; Reboot</button>
-        <button class="btn btn-sm" style="background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--text-dim);" onclick="loadConfig()">↺ Reload</button>
-        <span class="cfg-status" id="cfg-status"></span>
+    </template>
+  </article>
+
+  <!-- Settings Panel (Collapsible via HTML5 details) -->
+  <details :open="settingsOpen" @toggle="onSettingsToggle($event)">
+    <summary role="button" class="outline contrast" style="margin-bottom: 1rem;">⚙️ Network &amp; Connection Settings</summary>
+    <article>
+      <p style="font-size: 0.8rem; color: var(--pico-muted-color); margin-bottom: 1rem;">
+        Changes are saved to NVS and take effect after reboot. Current compile-time defaults are shown as placeholders.
+      </p>
+      <div class="grid">
+        <label>
+          WiFi SSID
+          <input type="text" x-model="config.wifi_ssid" placeholder="YourWiFiSSID" autocomplete="off">
+        </label>
+        <label>
+          WiFi Password
+          <input type="password" x-model="config.wifi_pass" placeholder="(unchanged)" autocomplete="new-password">
+        </label>
       </div>
-    </div>
-  </div>
 
-  <div class="card">
-    <div class="card-title">📦 Wireless Web OTA Update &amp; Device Control</div>
-    <div style="display: flex; gap: 12px; align-items: center; margin-top: 12px; flex-wrap: wrap;">
-      <input type="file" id="bin-file" accept=".bin">
-      <input type="password" id="ota-pass" placeholder="Password (admin)" style="background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 8px; color: var(--text); padding: 8px 12px; font-size: 0.85rem; width: 140px;">
-      <button class="btn" id="upload-btn" onclick="uploadFirmware()">Upload &amp; Flash</button>
-      <button class="btn-danger" id="reboot-btn" onclick="rebootDevice()">Reboot Device</button>
-      <span id="upload-status" style="font-size: 0.85rem; color: var(--text-dim);"></span>
-    </div>
-  </div>
+      <div class="grid">
+        <label>
+          Chint XIAO IP
+          <input type="text" x-model="config.chint_ip" placeholder="10.0.0.197" autocomplete="off">
+        </label>
+        <label>
+          Shelly Pro EM IP
+          <input type="text" x-model="config.shelly_ip" placeholder="10.0.0.187" autocomplete="off">
+        </label>
+      </div>
 
-  <footer>
-    Auto-refreshing &bull; Health API: <a href="/health" style="color: var(--accent);">/health</a>
-    &bull; Config API: <a href="/api/config" style="color: var(--accent);">/api/config</a>
+      <div class="grid">
+        <label>
+          MQTT Broker IP
+          <input type="text" x-model="config.mqtt_broker" placeholder="10.0.0.1" autocomplete="off">
+        </label>
+        <label>
+          MQTT Port
+          <input type="number" x-model.number="config.mqtt_port" placeholder="1883" min="1" max="65535">
+        </label>
+      </div>
+
+      <div class="grid">
+        <label>
+          MQTT Username
+          <input type="text" x-model="config.mqtt_user" placeholder="(none)" autocomplete="off">
+        </label>
+        <label>
+          MQTT Password
+          <input type="password" x-model="config.mqtt_pass" placeholder="(unchanged)" autocomplete="new-password">
+        </label>
+      </div>
+
+      <div class="grid">
+        <label>
+          OTA Password
+          <input type="password" x-model="config.ota_password" placeholder="admin" autocomplete="new-password">
+        </label>
+      </div>
+
+      <div style="display: flex; gap: 0.75rem; align-items: center; margin-top: 1rem; flex-wrap: wrap;">
+        <button @click="saveConfig()" style="width: auto; margin-bottom: 0;">💾 Save &amp; Reboot</button>
+        <button class="outline secondary" @click="loadConfig()" style="width: auto; margin-bottom: 0;">↺ Reload</button>
+        <small :style="{ color: configStatusColor }" x-text="configStatus"></small>
+      </div>
+    </article>
+  </details>
+
+  <!-- Wireless Web OTA Update & Device Control -->
+  <article>
+    <div class="card-heading">📦 Wireless Web OTA Update &amp; Device Control</div>
+    <div style="display: flex; gap: 0.75rem; align-items: center; margin-top: 0.75rem; flex-wrap: wrap;">
+      <input type="file" id="bin-file" accept=".bin" style="width: auto; margin-bottom: 0;">
+      <input type="password" x-model="otaPassword" placeholder="Password (admin)" style="width: 140px; margin-bottom: 0;">
+      <button @click="uploadFirmware()" style="width: auto; margin-bottom: 0;">Upload &amp; Flash</button>
+      <button class="outline secondary" @click="rebootDevice(false)" style="width: auto; margin-bottom: 0; color: var(--rose); border-color: var(--rose);">Reboot Device</button>
+      <small :style="{ color: uploadStatusColor }" x-text="uploadStatus"></small>
+    </div>
+  </article>
+
+  <footer style="text-align: center; font-size: 0.8rem; color: var(--pico-muted-color); margin-top: 2rem;">
+    Auto-refreshing &bull; Health API: <a href="/health">/health</a>
+    &bull; Config API: <a href="/api/config">/api/config</a>
   </footer>
 
   <script>
-    let userSelectingPriority = false;
-    let userSelectingPvPriority = false;
-    let userSelectingFilter = false;
+    function dashboardApp() {
+      return {
+        liveMode: localStorage.getItem("live_mode") !== "false",
+        connState: "live",
+        status: "HEALTHY",
+        grid: { watts: 0, volts: 0, amps: 0, pf: 0, freq: 0, import_kwh: 0, export_kwh: 0, source: "NONE", filter: "damped" },
+        pv: { watts: 0, yield_kwh: 0, source: "NONE" },
+        chint: { ws_connected: false, ip: "?", age_sec: -1 },
+        shelly: { ws_connected: false, ip: "?", age_sec: -1 },
+        opendtu: { mqtt_connected: false, age_sec: -1 },
+        modbus: { rs485_active: false, queries: 0, queries_grid: 0, queries_pv: 0, crc_errors: 0, rate_hz: 0, age_sec: -1, inverter_connected: false },
+        wifi: { ip: "--", rssi: 0 },
+        uptime_sec: 0,
+        free_heap: 0,
+        net_stack_hwm: 0,
+        priorityMode: 0,
+        pvPriorityMode: 0,
+        filterMode: "damped",
+        sourceEvents: [],
+        settingsOpen: false,
+        config: { wifi_ssid: "", wifi_pass: "", chint_ip: "", shelly_ip: "", mqtt_broker: "", mqtt_port: 1883, mqtt_user: "", mqtt_pass: "", ota_password: "" },
+        configStatus: "",
+        configStatusColor: "",
+        uploadStatus: "",
+        uploadStatusColor: "",
+        otaPassword: localStorage.getItem("ota_pwd") || "admin",
 
-    const priSelectInit = document.getElementById("grid-priority-select");
-    if (priSelectInit) {
-      priSelectInit.addEventListener("focus", () => { userSelectingPriority = true; });
-      priSelectInit.addEventListener("blur", () => { userSelectingPriority = false; });
-    }
-    const pvSelectInit = document.getElementById("pv-priority-select");
-    if (pvSelectInit) {
-      pvSelectInit.addEventListener("focus", () => { userSelectingPvPriority = true; });
-      pvSelectInit.addEventListener("blur", () => { userSelectingPvPriority = false; });
-    }
-    const filterSelectInit = document.getElementById("filter-mode-select");
-    if (filterSelectInit) {
-      filterSelectInit.addEventListener("focus", () => { userSelectingFilter = true; });
-      filterSelectInit.addEventListener("blur", () => { userSelectingFilter = false; });
-    }
+        ws: null,
+        wsReconnectTimer: null,
+        pollTimer: null,
 
-    // ---- Settings Panel ----
-    function toggleSettings() {
-      const panel = document.getElementById("settings-panel");
-      const btn   = document.getElementById("settings-toggle-btn");
-      const arrow = document.getElementById("settings-arrow");
-      const open  = panel.classList.toggle("open");
-      btn.classList.toggle("open", open);
-      arrow.innerText = open ? "▲" : "▼";
-      if (open) loadConfig();
-    }
-
-    async function loadConfig() {
-      const st = document.getElementById("cfg-status");
-      st.innerText = "Loading...";
-      st.style.color = "var(--text-dim)";
-      try {
-        const res = await fetch("/api/config");
-        if (!res.ok) { st.innerText = "Auth required"; st.style.color = "var(--rose)"; return; }
-        const d = await res.json();
-        document.getElementById("cfg-wifi-ssid").value   = d.wifi_ssid || "";
-        document.getElementById("cfg-wifi-pass").value   = "";
-        document.getElementById("cfg-chint-ip").value    = d.chint_ip || "";
-        document.getElementById("cfg-shelly-ip").value   = d.shelly_ip || "";
-        document.getElementById("cfg-mqtt-broker").value = d.mqtt_broker || "";
-        document.getElementById("cfg-mqtt-port").value   = d.mqtt_port || "";
-        document.getElementById("cfg-mqtt-user").value   = d.mqtt_user || "";
-        document.getElementById("cfg-mqtt-pass").value   = "";  // never pre-fill password
-        document.getElementById("cfg-ota-pass").value    = d.ota_password || "";
-        st.innerText = "Loaded ✓";
-        st.style.color = "var(--emerald)";
-        setTimeout(() => { st.innerText = ""; }, 2000);
-      } catch (e) {
-        st.innerText = "Error: " + e.message;
-        st.style.color = "var(--rose)";
-      }
-    }
-
-    async function saveConfig() {
-      const st = document.getElementById("cfg-status");
-      st.innerText = "Saving...";
-      st.style.color = "var(--amber)";
-
-      const params = new URLSearchParams();
-      const f = (id, key, allowEmpty = false) => {
-        const v = document.getElementById(id).value.trim();
-        if (allowEmpty || v) params.append(key, v);
-      };
-      f("cfg-wifi-ssid",   "wifi_ssid");
-      f("cfg-wifi-pass",   "wifi_pass", true);
-      f("cfg-chint-ip",    "chint_ip");
-      f("cfg-shelly-ip",   "shelly_ip");
-      f("cfg-mqtt-broker", "mqtt_broker");
-      f("cfg-mqtt-port",   "mqtt_port");
-      f("cfg-mqtt-user",   "mqtt_user", true);
-      f("cfg-mqtt-pass",   "mqtt_pass", true);
-      f("cfg-ota-pass",    "ota_password", true);
-
-      try {
-        const res = await fetch("/api/config", {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: params.toString()
-        });
-        const d = await res.json();
-        if (d.status === "OK") {
-          st.innerText = d.msg + " — rebooting in 3s...";
-          st.style.color = "var(--emerald)";
-          // Auto-reboot so settings take effect
-          setTimeout(async () => {
-            await rebootDevice(true);
-          }, 3000);
-        } else {
-          st.innerText = "Error: " + (d.msg || "unknown");
-          st.style.color = "var(--rose)";
-        }
-      } catch (e) {
-        st.innerText = "Error: " + e.message;
-        st.style.color = "var(--rose)";
-      }
-    }
-
-    // ---- Source Events Log ----
-    function renderSourceEvents(events) {
-      const container = document.getElementById("source-events-list");
-      if (!events || events.length === 0) {
-        container.innerHTML = '<span style="color: var(--text-dim); font-size: 0.85rem;">No transitions recorded yet.</span>';
-        return;
-      }
-      container.innerHTML = events.slice().reverse().map(ev => {
-        const mins = Math.floor(ev.t / 60);
-        const secs = ev.t % 60;
-        const ts   = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
-        const color = ev.to === "NONE" ? "var(--rose)" : (ev.to === "CHINT_WS" ? "var(--emerald)" : "var(--amber)");
-        return `<div class="event-row">
-          <span class="event-t">+${ts}</span>
-          <span style="color: var(--text-dim);">${ev.from}</span>
-          <span style="color: var(--text-dim);">→</span>
-          <span style="color: ${color}; font-weight: 600;">${ev.to}</span>
-        </div>`;
-      }).join("");
-    }
-
-    // ---- Control Actions (WS with HTTP Fallback) ----
-    function sendWsOrHttp(actionPayload, fallbackUrl) {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(actionPayload));
-      } else if (fallbackUrl) {
-        fetch(fallbackUrl).catch(e => console.error("HTTP action failed:", e));
-      }
-    }
-
-    function setPriority(val) {
-      sendWsOrHttp({ action: "set_priority", mode: parseInt(val, 10) }, "/api/priority?mode=" + val);
-    }
-
-    function setPvPriority(val) {
-      sendWsOrHttp({ action: "set_pv_priority", mode: parseInt(val, 10) }, "/api/pv_priority?mode=" + val);
-    }
-
-    function setFilterMode(val) {
-      sendWsOrHttp({ action: "set_filter", mode: val }, "/api/filter?mode=" + val);
-    }
-
-    // ---- Dashboard Renderer (Used by both WS stream and HTTP fallback) ----
-    function renderDashboard(d) {
-      if (!isLiveMode || !d) return;
-
-      const badge = document.getElementById("sys-status");
-      if (badge && d.status) {
-        badge.innerText = d.status;
-        badge.className = "badge " + (d.status === "HEALTHY" ? "badge-ok" : (d.status === "DEGRADED" ? "badge-warn" : "badge-err"));
-      }
-
-      if (d.grid) {
-        const gw = d.grid.watts;
-        document.getElementById("grid-w").innerText = Math.abs(gw).toFixed(1) + " W";
-        const dirEl = document.getElementById("grid-dir");
-        if (gw > 5.0) {
-          dirEl.innerText = "↓ Importing from Grid";
-          dirEl.style.color = "var(--amber)";
-        } else if (gw < -5.0) {
-          dirEl.innerText = "↑ Exporting to Grid";
-          dirEl.style.color = "var(--emerald)";
-        } else {
-          dirEl.innerText = "⚡ Balanced (Zero Export)";
-          dirEl.style.color = "var(--accent)";
-        }
-
-        document.getElementById("grid-v").innerText = d.grid.volts.toFixed(1) + " V";
-        document.getElementById("grid-c").innerText = d.grid.amps.toFixed(2) + " A";
-        document.getElementById("grid-pf").innerText = d.grid.pf.toFixed(2);
-        document.getElementById("grid-f").innerText = d.grid.freq.toFixed(1) + " Hz";
-
-        document.getElementById("grid-imp").innerText = d.grid.import_kwh.toFixed(2) + " kWh";
-        document.getElementById("grid-exp").innerText = d.grid.export_kwh.toFixed(2) + " kWh";
-
-        const srcBadge = document.getElementById("grid-source-badge");
-        if (d.grid.source === "CHINT_WS") {
-          srcBadge.innerText = "🌐 Chint WS";
-          srcBadge.className = "badge badge-ok";
-        } else if (d.grid.source === "SHELLY_WS") {
-          srcBadge.innerText = "🌐 Shelly WS";
-          srcBadge.className = "badge badge-warn";
-        } else {
-          srcBadge.innerText = "NONE";
-          srcBadge.className = "badge badge-err";
-        }
-
-        const filterSelect = document.getElementById("filter-mode-select");
-        if (filterSelect && d.grid.filter && !userSelectingFilter) {
-          filterSelect.value = d.grid.filter;
-        }
-      }
-
-      if (d.pv) {
-        document.getElementById("pv-w").innerText = d.pv.watts.toFixed(1) + " W";
-        document.getElementById("pv-yield").innerText = "Total Yield: " + d.pv.yield_kwh.toFixed(2) + " kWh";
-
-        const pvSrcBadge = document.getElementById("pv-source-badge");
-        if (pvSrcBadge) {
-          if (d.pv.source === "OPENDTU_MQTT") {
-            pvSrcBadge.innerText = "📡 OpenDTU MQTT";
-            pvSrcBadge.className = "badge badge-ok";
+        init() {
+          if (this.liveMode) {
+            this.initWebSocket();
           } else {
-            pvSrcBadge.innerText = "NONE";
-            pvSrcBadge.className = "badge badge-err";
+            this.connState = "paused";
           }
-        }
-      }
 
-      const cBadge = document.getElementById("chint-ws-badge");
-      if (cBadge && d.chint) {
-        const ip = d.chint.ip || "?";
-        if (d.chint.ws_connected && d.chint.age_sec >= 0 && d.chint.age_sec < 5) {
-          cBadge.innerText = "ACTIVE (" + ip + " • " + d.chint.age_sec.toFixed(1) + "s ago)";
-          cBadge.className = "badge badge-ok";
-        } else if (d.chint.ws_connected) {
-          cBadge.innerText = "CONNECTED (WAITING DATA)";
-          cBadge.className = "badge badge-warn";
-        } else {
-          cBadge.innerText = "DISCONNECTED (" + ip + ")";
-          cBadge.className = "badge badge-err";
-        }
-      }
+          document.addEventListener("visibilitychange", () => {
+            if (!this.liveMode) return;
+            if (document.hidden) {
+              if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.close();
+              this.stopHttpPolling();
+            } else {
+              this.initWebSocket();
+            }
+          });
+        },
 
-      const sBadge = document.getElementById("shelly-ws-badge");
-      if (sBadge && d.shelly) {
-        const shellyIp = d.shelly.ip || "?";
-        if (d.grid && d.grid.source === "CHINT_WS") {
-          sBadge.innerText = d.shelly.ws_connected ? "STANDBY (" + shellyIp + " — Fallback Ready)" : "DISCONNECTED (" + shellyIp + ")";
-          sBadge.className = "badge " + (d.shelly.ws_connected ? "badge-ok" : "badge-err");
-        } else {
-          sBadge.innerText = d.shelly.ws_connected ? ("ACTIVE (" + shellyIp + ")") : "DISCONNECTED (" + shellyIp + ")";
-          sBadge.className = "badge " + (d.shelly.ws_connected ? "badge-warn" : "badge-err");
-        }
-      }
+        // --- Computed Properties ---
+        get connBadgeClass() {
+          if (!this.liveMode || this.connState === "paused") return "badge-muted";
+          if (this.connState === "live") return "badge-accent";
+          if (this.connState === "poll") return "badge-warn";
+          return "badge-err";
+        },
+        get connBadgeText() {
+          if (!this.liveMode || this.connState === "paused") return "⏸️ UPDATES PAUSED";
+          if (this.connState === "live") return "⚡ LIVE STREAM (WS 5Hz)";
+          if (this.connState === "poll") return "⏱ HTTP POLLING (2s)";
+          return "🔌 RECONNECTING...";
+        },
+        get sysStatusClass() {
+          if (this.status === "HEALTHY") return "badge-ok";
+          if (this.status === "DEGRADED") return "badge-warn";
+          return "badge-err";
+        },
+        get gridWattsDisplay() {
+          const w = this.grid.watts || 0;
+          return Math.abs(w).toFixed(1) + " W";
+        },
+        get gridFlowColor() {
+          const w = this.grid.watts || 0;
+          if (w > 5.0) return "var(--amber)";
+          if (w < -5.0) return "var(--emerald)";
+          return "var(--accent)";
+        },
+        get gridFlowText() {
+          const w = this.grid.watts || 0;
+          if (w > 5.0) return "↓ Importing from Grid";
+          if (w < -5.0) return "↑ Exporting to Grid";
+          return "⚡ Balanced (Zero Export)";
+        },
+        get pvWattsDisplay() {
+          const w = this.pv.watts || 0;
+          return w.toFixed(1) + " W";
+        },
+        get gridSourceBadgeClass() {
+          if (this.grid.source === "CHINT_WS") return "badge-ok";
+          if (this.grid.source === "SHELLY_WS") return "badge-warn";
+          return "badge-err";
+        },
+        get gridSourceBadgeText() {
+          if (this.grid.source === "CHINT_WS") return "🌐 Chint WS";
+          if (this.grid.source === "SHELLY_WS") return "🌐 Shelly WS";
+          return "NONE";
+        },
+        get pvSourceBadgeClass() {
+          if (this.pv.source === "OPENDTU_MQTT") return "badge-ok";
+          return "badge-err";
+        },
+        get pvSourceBadgeText() {
+          if (this.pv.source === "OPENDTU_MQTT") return "📡 OpenDTU MQTT";
+          return "NONE";
+        },
+        get chintBadgeClass() {
+          if (this.chint.ws_connected && this.chint.age_sec >= 0 && this.chint.age_sec < 5) return "badge-ok";
+          if (this.chint.ws_connected) return "badge-warn";
+          return "badge-err";
+        },
+        get chintBadgeText() {
+          const ip = this.chint.ip || "?";
+          if (this.chint.ws_connected && this.chint.age_sec >= 0 && this.chint.age_sec < 5) {
+            return `ACTIVE (${ip} • ${this.chint.age_sec.toFixed(1)}s ago)`;
+          }
+          if (this.chint.ws_connected) return "CONNECTED (WAITING DATA)";
+          return `DISCONNECTED (${ip})`;
+        },
+        get shellyBadgeClass() {
+          const isStandby = (this.grid.source === "CHINT_WS");
+          if (isStandby) return this.shelly.ws_connected ? "badge-ok" : "badge-err";
+          return this.shelly.ws_connected ? "badge-warn" : "badge-err";
+        },
+        get shellyBadgeText() {
+          const ip = this.shelly.ip || "?";
+          const isStandby = (this.grid.source === "CHINT_WS");
+          if (isStandby) {
+            return this.shelly.ws_connected ? `STANDBY (${ip} — Fallback Ready)` : `DISCONNECTED (${ip})`;
+          }
+          return this.shelly.ws_connected ? `ACTIVE (${ip})` : `DISCONNECTED (${ip})`;
+        },
+        get opendtuBadgeClass() {
+          if (this.opendtu.mqtt_connected && this.opendtu.age_sec >= 0 && this.opendtu.age_sec < 10) return "badge-ok";
+          if (this.opendtu.mqtt_connected) return "badge-warn";
+          return "badge-err";
+        },
+        get opendtuBadgeText() {
+          if (this.opendtu.mqtt_connected && this.opendtu.age_sec >= 0 && this.opendtu.age_sec < 10) {
+            return `ACTIVE (${this.opendtu.age_sec.toFixed(1)}s ago)`;
+          }
+          if (this.opendtu.mqtt_connected) return "CONNECTED (WAITING DATA)";
+          return "DISCONNECTED";
+        },
+        get inverterBadgeClass() {
+          if (this.modbus.inverter_connected && this.modbus.rate_hz > 0) return "badge-ok";
+          if (this.modbus.queries > 0) return "badge-warn";
+          return "badge-err";
+        },
+        get inverterBadgeText() {
+          if (this.modbus.inverter_connected && this.modbus.rate_hz > 0) {
+            const ageStr = (this.modbus.age_sec >= 0) ? (this.modbus.age_sec < 0.1 ? "<0.1s" : this.modbus.age_sec.toFixed(1) + "s ago") : "<0.1s";
+            return `ACTIVE (${this.modbus.rate_hz.toFixed(1)} Hz • ${ageStr})`;
+          }
+          if (this.modbus.queries > 0) {
+            const ageStr = (this.modbus.age_sec >= 0) ? (this.modbus.age_sec.toFixed(0) + "s ago") : "--";
+            return `STALE (${ageStr})`;
+          }
+          return "NO TRAFFIC (DISCONNECTED)";
+        },
+        get modbusQueriesText() {
+          const rateStr = (this.modbus.rate_hz > 0) ? (this.modbus.rate_hz.toFixed(1) + " Hz • ") : "";
+          const q = (this.modbus.queries || 0).toLocaleString();
+          const crc = (this.modbus.crc_errors || 0);
+          return `${q} (${rateStr}${crc} CRC err)`;
+        },
+        get uptimeHeapText() {
+          const mins = Math.floor((this.uptime_sec || 0) / 60);
+          const heap = Math.floor((this.free_heap || 0) / 1024);
+          const hwm = this.net_stack_hwm ? ` • Net Stack HWM: ${this.net_stack_hwm}B` : "";
+          return `${mins} min • Free Heap: ${heap} KB${hwm}`;
+        },
 
-      const odtuBadge = document.getElementById("opendtu-badge");
-      if (odtuBadge && d.opendtu) {
-        if (d.opendtu.mqtt_connected && d.opendtu.age_sec >= 0 && d.opendtu.age_sec < 10) {
-          odtuBadge.innerText = "ACTIVE (" + d.opendtu.age_sec.toFixed(1) + "s ago)";
-          odtuBadge.className = "badge badge-ok";
-        } else if (d.opendtu.mqtt_connected) {
-          odtuBadge.innerText = "CONNECTED (WAITING DATA)";
-          odtuBadge.className = "badge badge-warn";
-        } else {
-          odtuBadge.innerText = "DISCONNECTED";
-          odtuBadge.className = "badge badge-err";
-        }
-      }
+        // --- Methods ---
+        toggleLiveMode() {
+          this.liveMode = !this.liveMode;
+          localStorage.setItem("live_mode", this.liveMode ? "true" : "false");
+          if (this.liveMode) {
+            this.connState = "live";
+            this.initWebSocket();
+          } else {
+            if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.close();
+            if (this.wsReconnectTimer) {
+              clearTimeout(this.wsReconnectTimer);
+              this.wsReconnectTimer = null;
+            }
+            this.stopHttpPolling();
+            this.connState = "paused";
+          }
+        },
 
-      const priSelect = document.getElementById("grid-priority-select");
-      if (d.priority && priSelect && !userSelectingPriority) {
-        priSelect.value = d.priority.mode;
-      }
+        formatTimeOffset(t) {
+          const mins = Math.floor(t / 60);
+          const secs = t % 60;
+          return mins > 0 ? `+${mins}m ${secs}s` : `+${secs}s`;
+        },
 
-      const pvPriSelect = document.getElementById("pv-priority-select");
-      if (d.pv_priority && pvPriSelect && !userSelectingPvPriority) {
-        pvPriSelect.value = d.pv_priority.mode;
-      }
+        sendAction(actionPayload, fallbackUrl) {
+          if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify(actionPayload));
+          } else if (fallbackUrl) {
+            fetch(fallbackUrl).catch(e => console.error("HTTP action failed:", e));
+          }
+        },
 
-      const rBadge = document.getElementById("rs485-badge");
-      if (d.modbus && rBadge) {
-        rBadge.innerText = d.modbus.rs485_active ? "ACTIVE (BUS ENABLED)" : "SAFE MODE (OFF)";
-        rBadge.className = "badge " + (d.modbus.rs485_active ? "badge-ok" : "badge-err");
-      }
+        setPriority(val) {
+          const mode = parseInt(val, 10);
+          this.priorityMode = mode;
+          this.sendAction({ action: "set_priority", mode: mode }, "/api/priority?mode=" + mode);
+        },
 
-      const invBadge = document.getElementById("inverter-link-badge");
-      if (d.modbus && invBadge) {
-        if (d.modbus.inverter_connected && d.modbus.rate_hz > 0) {
-          const ageStr = (d.modbus.age_sec >= 0) ? (d.modbus.age_sec < 0.1 ? "<0.1s" : d.modbus.age_sec.toFixed(1) + "s ago") : "<0.1s";
-          invBadge.innerText = "ACTIVE (" + d.modbus.rate_hz.toFixed(1) + " Hz • " + ageStr + ")";
-          invBadge.className = "badge badge-ok";
-        } else if (d.modbus.queries > 0) {
-          const ageStr = (d.modbus.age_sec >= 0) ? (d.modbus.age_sec.toFixed(0) + "s ago") : "--";
-          invBadge.innerText = "STALE (" + ageStr + ")";
-          invBadge.className = "badge badge-warn";
-        } else {
-          invBadge.innerText = "NO TRAFFIC (DISCONNECTED)";
-          invBadge.className = "badge badge-err";
-        }
-      }
+        setPvPriority(val) {
+          const mode = parseInt(val, 10);
+          this.pvPriorityMode = mode;
+          this.sendAction({ action: "set_pv_priority", mode: mode }, "/api/pv_priority?mode=" + mode);
+        },
 
-      if (d.modbus) {
-        const rateStr = (d.modbus.rate_hz > 0) ? (d.modbus.rate_hz.toFixed(1) + " Hz • ") : "";
-        document.getElementById("modbus-queries").innerText = (d.modbus.queries || 0).toLocaleString() + " (" + rateStr + (d.modbus.crc_errors || 0) + " CRC err)";
-        const mb = document.getElementById("modbus-breakdown");
-        if (mb) {
-          const qg = (d.modbus.queries_grid || 0).toLocaleString();
-          const qp = (d.modbus.queries_pv || 0).toLocaleString();
-          mb.innerHTML = `<span style="color:var(--accent);">Grid (ID 2):</span> ${qg} &bull; <span style="color:var(--emerald);">PV (ID 1):</span> ${qp}`;
-        }
-      }
+        setFilterMode(val) {
+          this.filterMode = val;
+          this.sendAction({ action: "set_filter", mode: val }, "/api/filter?mode=" + val);
+        },
 
-      if (d.wifi) {
-        document.getElementById("wifi-info").innerText = (d.wifi.ip || "--") + " (" + (d.wifi.rssi || 0) + " dBm)";
-      }
+        initWebSocket() {
+          if (!this.liveMode) return;
+          const wsHost = location.hostname || "10.0.0.110";
+          const wsUrl = "ws://" + wsHost + ":81/";
 
-      if (d.uptime_sec !== undefined) {
-        const hwm = d.net_stack_hwm !== undefined ? (" • Net Stack HWM: " + d.net_stack_hwm + "B") : "";
-        document.getElementById("uptime-heap").innerText =
-          Math.floor(d.uptime_sec / 60) + " min • Free Heap: " + Math.floor((d.free_heap || 0) / 1024) + " KB" + hwm;
-      }
-
-      // Source events log
-      if (d.source_events !== undefined) {
-        renderSourceEvents(d.source_events);
-      }
-    }
-
-    // ---- WebSocket Streaming & HTTP Fallback Engine ----
-    let ws = null;
-    let wsReconnectTimer = null;
-    let pollTimer = null;
-    let isLiveMode = localStorage.getItem("live_mode") !== "false";
-
-    function updateLiveToggleUI() {
-      const btn = document.getElementById("live-toggle-btn");
-      const dot = document.getElementById("live-dot");
-      const txt = document.getElementById("live-text");
-      if (!btn || !dot || !txt) return;
-
-      if (isLiveMode) {
-        btn.className = "btn btn-sm btn-live-on";
-        dot.className = "live-dot";
-        txt.innerText = "Live: ON";
-      } else {
-        btn.className = "btn btn-sm btn-live-off";
-        dot.className = "live-dot paused";
-        txt.innerText = "Live: PAUSED";
-      }
-    }
-
-    function toggleLiveMode() {
-      isLiveMode = !isLiveMode;
-      localStorage.setItem("live_mode", isLiveMode ? "true" : "false");
-      updateLiveToggleUI();
-
-      if (isLiveMode) {
-        setConnStatus("live");
-        initWebSocket();
-      } else {
-        // Stop stream and all updates
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.close();
-        }
-        if (wsReconnectTimer) {
-          clearTimeout(wsReconnectTimer);
-          wsReconnectTimer = null;
-        }
-        stopHttpPolling();
-        setConnStatus("paused");
-      }
-    }
-
-    function setConnStatus(mode) {
-      const badge = document.getElementById("conn-badge");
-      if (!badge) return;
-      if (!isLiveMode || mode === "paused") {
-        badge.innerText = "⏸️ UPDATES PAUSED";
-        badge.className = "badge";
-        badge.style = "background: rgba(148, 163, 184, 0.15); color: var(--text-dim); border: 1px solid rgba(148, 163, 184, 0.3);";
-      } else if (mode === "live") {
-        badge.innerText = "⚡ LIVE STREAM (WS 5Hz)";
-        badge.className = "badge badge-accent";
-        badge.style = "";
-      } else if (mode === "poll") {
-        badge.innerText = "⏱ HTTP POLLING (2s)";
-        badge.className = "badge badge-warn";
-        badge.style = "";
-      } else {
-        badge.innerText = "🔌 RECONNECTING...";
-        badge.className = "badge badge-err";
-        badge.style = "";
-      }
-    }
-
-    function initWebSocket() {
-      if (!isLiveMode) return;
-      const wsHost = location.hostname || "10.0.0.110";
-      const wsUrl = "ws://" + wsHost + ":81/";
-
-      try {
-        ws = new WebSocket(wsUrl);
-      } catch (e) {
-        console.warn("[WS] Init failed, falling back to HTTP:", e);
-        startHttpPolling();
-        return;
-      }
-
-      ws.onopen = () => {
-        console.log("[WS] Stream connected on port 81");
-        setConnStatus("live");
-        stopHttpPolling();
-        if (wsReconnectTimer) {
-          clearTimeout(wsReconnectTimer);
-          wsReconnectTimer = null;
-        }
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const d = JSON.parse(event.data);
-          if (d && d.status) renderDashboard(d);
-        } catch (e) {
-          console.error("[WS] Parse error:", e);
-        }
-      };
-
-      ws.onerror = (err) => {
-        console.warn("[WS] Error, starting HTTP polling fallback");
-        if (isLiveMode) startHttpPolling();
-      };
-
-      ws.onclose = () => {
-        console.warn("[WS] Disconnected");
-        if (!isLiveMode) return;
-        startHttpPolling();
-        if (!wsReconnectTimer) {
-          wsReconnectTimer = setTimeout(() => {
-            wsReconnectTimer = null;
-            if (isLiveMode) initWebSocket();
-          }, 3000);
-        }
-      };
-    }
-
-    async function pollHttp() {
-      if (!isLiveMode) return;
-      try {
-        const res = await fetch("/health");
-        if (res.ok) {
-          const data = await res.json();
-          renderDashboard(data);
-        }
-      } catch (e) {
-        console.error("[HTTP] Poll error:", e);
-        setConnStatus("reconnecting");
-      }
-    }
-
-    function startHttpPolling() {
-      if (!isLiveMode) return;
-      setConnStatus("poll");
-      if (!pollTimer) {
-        pollHttp();
-        pollTimer = setInterval(pollHttp, 2000);
-      }
-    }
-
-    function stopHttpPolling() {
-      if (pollTimer) {
-        clearInterval(pollTimer);
-        pollTimer = null;
-      }
-    }
-
-    async function uploadFirmware() {
-      const fileInput = document.getElementById("bin-file");
-      const passInput = document.getElementById("ota-pass");
-      const status = document.getElementById("upload-status");
-      if (!fileInput.files.length) {
-        status.innerText = "Please select a .bin file first!";
-        status.style.color = "var(--rose)";
-        return;
-      }
-      let password = passInput ? passInput.value.trim() : "";
-      if (!password) {
-        password = localStorage.getItem("ota_pwd") || "admin";
-      }
-      const file = fileInput.files[0];
-      const formData = new FormData();
-      formData.append("file", file, file.name);
-      status.innerText = "Uploading... do not unplug";
-      status.style.color = "var(--amber)";
-
-      try {
-        let res = await fetch("/update?password=" + encodeURIComponent(password), {
-          method: "POST",
-          headers: { "X-OTA-Password": password },
-          body: formData
-        });
-
-        if (res.status === 401) {
-          const prompted = prompt("OTA Authentication Required. Enter Password:", password || "admin");
-          if (!prompted) {
-            status.innerText = "Upload cancelled: password required";
-            status.style.color = "var(--rose)";
+          try {
+            this.ws = new WebSocket(wsUrl);
+          } catch (e) {
+            console.warn("[WS] Init failed, falling back to HTTP:", e);
+            this.startHttpPolling();
             return;
           }
-          password = prompted;
-          if (passInput) passInput.value = prompted;
-          localStorage.setItem("ota_pwd", prompted);
-          status.innerText = "Retrying upload...";
-          res = await fetch("/update?password=" + encodeURIComponent(prompted), {
-            method: "POST",
-            headers: { "X-OTA-Password": prompted },
-            body: formData
-          });
+
+          this.ws.onopen = () => {
+            this.connState = "live";
+            this.stopHttpPolling();
+            if (this.wsReconnectTimer) {
+              clearTimeout(this.wsReconnectTimer);
+              this.wsReconnectTimer = null;
+            }
+          };
+
+          this.ws.onmessage = (event) => {
+            try {
+              const d = JSON.parse(event.data);
+              if (d && d.status) this.applyData(d);
+            } catch (e) {
+              console.error("[WS] Parse error:", e);
+            }
+          };
+
+          this.ws.onerror = (err) => {
+            console.warn("[WS] Error, starting HTTP polling fallback");
+            if (this.liveMode) this.startHttpPolling();
+          };
+
+          this.ws.onclose = () => {
+            if (!this.liveMode) return;
+            this.startHttpPolling();
+            if (!this.wsReconnectTimer) {
+              this.wsReconnectTimer = setTimeout(() => {
+                this.wsReconnectTimer = null;
+                if (this.liveMode) this.initWebSocket();
+              }, 3000);
+            }
+          };
+        },
+
+        startHttpPolling() {
+          if (!this.liveMode) return;
+          this.connState = "poll";
+          if (!this.pollTimer) {
+            this.pollHttp();
+            this.pollTimer = setInterval(() => this.pollHttp(), 2000);
+          }
+        },
+
+        stopHttpPolling() {
+          if (this.pollTimer) {
+            clearInterval(this.pollTimer);
+            this.pollTimer = null;
+          }
+        },
+
+        async pollHttp() {
+          if (!this.liveMode) return;
+          try {
+            const res = await fetch("/health");
+            if (res.ok) {
+              const data = await res.json();
+              this.applyData(data);
+            }
+          } catch (e) {
+            console.error("[HTTP] Poll error:", e);
+            this.connState = "reconnecting";
+          }
+        },
+
+        applyData(d) {
+          if (!this.liveMode || !d) return;
+          if (d.status) this.status = d.status;
+          if (d.grid) this.grid = Object.assign({}, this.grid, d.grid);
+          if (d.pv) this.pv = Object.assign({}, this.pv, d.pv);
+          if (d.chint) this.chint = Object.assign({}, this.chint, d.chint);
+          if (d.shelly) this.shelly = Object.assign({}, this.shelly, d.shelly);
+          if (d.opendtu) this.opendtu = Object.assign({}, this.opendtu, d.opendtu);
+          if (d.modbus) this.modbus = Object.assign({}, this.modbus, d.modbus);
+          if (d.wifi) this.wifi = Object.assign({}, this.wifi, d.wifi);
+          if (d.uptime_sec !== undefined) this.uptime_sec = d.uptime_sec;
+          if (d.free_heap !== undefined) this.free_heap = d.free_heap;
+          if (d.net_stack_hwm !== undefined) this.net_stack_hwm = d.net_stack_hwm;
+          if (d.priority && d.priority.mode !== undefined) this.priorityMode = d.priority.mode;
+          if (d.pv_priority && d.pv_priority.mode !== undefined) this.pvPriorityMode = d.pv_priority.mode;
+          if (d.grid && d.grid.filter) this.filterMode = d.grid.filter;
+          if (d.source_events) this.sourceEvents = d.source_events;
+        },
+
+        onSettingsToggle(event) {
+          this.settingsOpen = event.target.open;
+          if (this.settingsOpen) this.loadConfig();
+        },
+
+        async loadConfig() {
+          this.configStatus = "Loading...";
+          this.configStatusColor = "var(--pico-muted-color)";
+          try {
+            const res = await fetch("/api/config");
+            if (!res.ok) {
+              this.configStatus = "Auth required";
+              this.configStatusColor = "var(--rose)";
+              return;
+            }
+            const d = await res.json();
+            this.config.wifi_ssid   = d.wifi_ssid || "";
+            this.config.wifi_pass   = "";
+            this.config.chint_ip    = d.chint_ip || "";
+            this.config.shelly_ip   = d.shelly_ip || "";
+            this.config.mqtt_broker = d.mqtt_broker || "";
+            this.config.mqtt_port   = d.mqtt_port || 1883;
+            this.config.mqtt_user   = d.mqtt_user || "";
+            this.config.mqtt_pass   = "";
+            this.config.ota_password = d.ota_password || "";
+            this.configStatus = "Loaded ✓";
+            this.configStatusColor = "var(--emerald)";
+            setTimeout(() => { this.configStatus = ""; }, 2500);
+          } catch (e) {
+            this.configStatus = "Error: " + e.message;
+            this.configStatusColor = "var(--rose)";
+          }
+        },
+
+        async saveConfig() {
+          this.configStatus = "Saving...";
+          this.configStatusColor = "var(--amber)";
+
+          const params = new URLSearchParams();
+          if (this.config.wifi_ssid) params.append("wifi_ssid", this.config.wifi_ssid);
+          if (this.config.wifi_pass) params.append("wifi_pass", this.config.wifi_pass);
+          if (this.config.chint_ip) params.append("chint_ip", this.config.chint_ip);
+          if (this.config.shelly_ip) params.append("shelly_ip", this.config.shelly_ip);
+          if (this.config.mqtt_broker) params.append("mqtt_broker", this.config.mqtt_broker);
+          if (this.config.mqtt_port) params.append("mqtt_port", this.config.mqtt_port);
+          params.append("mqtt_user", this.config.mqtt_user || "");
+          if (this.config.mqtt_pass) params.append("mqtt_pass", this.config.mqtt_pass);
+          params.append("ota_password", this.config.ota_password || "");
+
+          try {
+            const res = await fetch("/api/config", {
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: params.toString()
+            });
+            const d = await res.json();
+            if (d.status === "OK") {
+              this.configStatus = (d.msg || "Saved") + " — rebooting in 3s...";
+              this.configStatusColor = "var(--emerald)";
+              setTimeout(() => this.rebootDevice(true), 3000);
+            } else {
+              this.configStatus = "Error: " + (d.msg || "unknown");
+              this.configStatusColor = "var(--rose)";
+            }
+          } catch (e) {
+            this.configStatus = "Error: " + e.message;
+            this.configStatusColor = "var(--rose)";
+          }
+        },
+
+        async uploadFirmware() {
+          const fileInput = document.getElementById("bin-file");
+          if (!fileInput.files.length) {
+            this.uploadStatus = "Please select a .bin file first!";
+            this.uploadStatusColor = "var(--rose)";
+            return;
+          }
+          let password = this.otaPassword.trim() || localStorage.getItem("ota_pwd") || "admin";
+          const file = fileInput.files[0];
+          const formData = new FormData();
+          formData.append("file", file, file.name);
+          this.uploadStatus = "Uploading... do not unplug";
+          this.uploadStatusColor = "var(--amber)";
+
+          try {
+            let res = await fetch("/update?password=" + encodeURIComponent(password), {
+              method: "POST",
+              headers: { "X-OTA-Password": password },
+              body: formData
+            });
+
+            if (res.status === 401) {
+              const prompted = prompt("OTA Authentication Required. Enter Password:", password || "admin");
+              if (!prompted) {
+                this.uploadStatus = "Upload cancelled: password required";
+                this.uploadStatusColor = "var(--rose)";
+                return;
+              }
+              password = prompted;
+              this.otaPassword = prompted;
+              localStorage.setItem("ota_pwd", prompted);
+              this.uploadStatus = "Retrying upload...";
+              res = await fetch("/update?password=" + encodeURIComponent(prompted), {
+                method: "POST",
+                headers: { "X-OTA-Password": prompted },
+                body: formData
+              });
+            }
+
+            if (res.ok) {
+              if (password) localStorage.setItem("ota_pwd", password);
+              this.uploadStatus = "Flash successful! Rebooting in 5s...";
+              this.uploadStatusColor = "var(--emerald)";
+              setTimeout(() => location.reload(), 5000);
+            } else {
+              this.uploadStatus = "Update failed! (HTTP " + res.status + ")";
+              this.uploadStatusColor = "var(--rose)";
+            }
+          } catch (err) {
+            this.uploadStatus = "Flash successful! Device rebooting...";
+            this.uploadStatusColor = "var(--emerald)";
+            setTimeout(() => location.reload(), 6000);
+          }
+        },
+
+        async rebootDevice(silent) {
+          if (!silent && !confirm("Are you sure you want to reboot the device?")) return;
+          if (!silent) {
+            this.uploadStatus = "Rebooting device...";
+            this.uploadStatusColor = "var(--amber)";
+          }
+          this.sendAction({ action: "reboot" }, "/reboot");
+          this.uploadStatus = "Device rebooting... reloading in 6s";
+          this.uploadStatusColor = "var(--emerald)";
+          setTimeout(() => location.reload(), 6000);
         }
-
-        if (res.ok) {
-          if (password) localStorage.setItem("ota_pwd", password);
-          status.innerText = "Flash successful! Rebooting in 5s...";
-          status.style.color = "var(--emerald)";
-          setTimeout(() => location.reload(), 5000);
-        } else {
-          status.innerText = "Update failed! (HTTP " + res.status + ")";
-          status.style.color = "var(--rose)";
-        }
-      } catch (err) {
-        status.innerText = "Flash successful! Device rebooting...";
-        status.style.color = "var(--emerald)";
-        setTimeout(() => location.reload(), 6000);
-      }
-    }
-
-    async function rebootDevice(silent) {
-      if (!silent && !confirm("Are you sure you want to reboot the device?")) return;
-      const passInput = document.getElementById("ota-pass");
-      let password = passInput ? passInput.value.trim() : "";
-      if (!password) password = localStorage.getItem("ota_pwd") || "admin";
-
-      const status = document.getElementById("upload-status");
-      if (status && !silent) {
-        status.innerText = "Rebooting device...";
-        status.style.color = "var(--amber)";
-      }
-
-      sendWsOrHttp({ action: "reboot" }, "/reboot");
-
-      if (status) {
-        status.innerText = "Device rebooting... reloading in 6s";
-        status.style.color = "var(--emerald)";
-      }
-      setTimeout(() => location.reload(), 6000);
-    }
-
-    document.addEventListener("visibilitychange", () => {
-      if (!isLiveMode) return;
-      if (document.hidden) {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.close();
-        }
-        stopHttpPolling();
-      } else {
-        initWebSocket();
-      }
-    });
-
-    // Initialize Live Mode UI & Stream on load
-    updateLiveToggleUI();
-    if (isLiveMode) {
-      initWebSocket();
-    } else {
-      setConnStatus("paused");
+      };
     }
   </script>
 </body>
