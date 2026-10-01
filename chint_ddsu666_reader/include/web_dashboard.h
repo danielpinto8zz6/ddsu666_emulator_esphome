@@ -2,416 +2,502 @@
 
 #include <Arduino.h>
 
-// Web UI HTML Dashboard for Chint DDSU666 Modbus Master
+// Web UI HTML Dashboard for Chint DDSU666 Modbus Master using Pico.css & Alpine.js
 const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Chint DDSU666 Modbus Master</title>
+  <!-- Pico.css Minimal & Semantic CSS Framework via CDN -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <!-- Alpine.js Lightweight Reactive UI Library via CDN -->
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <style>
     :root {
-      --bg: #0f172a;
-      --card-bg: rgba(30, 41, 59, 0.7);
-      --border: rgba(255, 255, 255, 0.08);
-      --accent: #38bdf8;
-      --accent-grad: linear-gradient(135deg, #38bdf8, #818cf8);
-      --text: #f8fafc;
-      --muted: #94a3b8;
-      --green: #10b981;
-      --red: #f43f5e;
+      --pico-font-size: 92%;
+      --emerald: #10b981;
       --amber: #f59e0b;
+      --rose: #f43f5e;
+      --accent: #38bdf8;
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    body { background-color: var(--bg); color: var(--text); padding: 20px; min-height: 100vh; display: flex; flex-direction: column; align-items: center; }
-    .container { width: 100%; max-width: 900px; display: flex; flex-direction: column; gap: 20px; }
-    header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 10px; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 10px; }
-    .title-box h1 { font-size: 1.4rem; font-weight: 700; background: var(--accent-grad); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-    .title-box p { font-size: 0.85rem; color: var(--muted); margin-top: 4px; }
-    .badge { padding: 4px 10px; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
-    .badge-online { background: rgba(16, 185, 129, 0.2); color: var(--green); border: 1px solid rgba(16, 185, 129, 0.3); }
-    .badge-offline { background: rgba(244, 63, 94, 0.2); color: var(--red); border: 1px solid rgba(244, 63, 94, 0.3); }
-    .badge-stream { background: rgba(56, 189, 248, 0.2); color: var(--accent); border: 1px solid rgba(56, 189, 248, 0.4); }
-    .hero-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 16px; padding: 30px; text-align: center; position: relative; backdrop-filter: blur(12px); box-shadow: 0 10px 25px -5px rgba(0,0,0,0.3); }
-    .hero-value { font-size: 3.8rem; font-weight: 800; letter-spacing: -0.03em; margin: 10px 0; }
-    .hero-unit { font-size: 1.5rem; color: var(--muted); margin-left: 4px; }
-    .hero-flow { font-size: 1rem; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; padding: 4px 14px; border-radius: 20px; }
-    .flow-import { background: rgba(56, 189, 248, 0.15); color: var(--accent); border: 1px solid rgba(56, 189, 248, 0.3); }
-    .flow-export { background: rgba(16, 185, 129, 0.15); color: var(--green); border: 1px solid rgba(16, 185, 129, 0.3); }
-    .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
-    .grid-4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; }
-    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 16px; backdrop-filter: blur(10px); }
-    .card-label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; font-weight: 600; margin-bottom: 6px; }
-    .card-val { font-size: 1.5rem; font-weight: 700; color: var(--text); }
-    .card-unit { font-size: 0.85rem; color: var(--muted); margin-left: 3px; }
-    .diag-box { background: rgba(15, 23, 42, 0.6); border-radius: 10px; padding: 14px; border: 1px solid var(--border); font-size: 0.85rem; }
-    .diag-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.03); }
-    .diag-row:last-child { border-bottom: none; }
-    .diag-label { color: var(--muted); }
-    .diag-val { font-weight: 600; }
-    .btn { background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--text); padding: 7px 14px; border-radius: 8px; cursor: pointer; font-size: 0.82rem; font-weight: 600; transition: all 0.2s; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
-    .btn:hover { background: rgba(255,255,255,0.12); }
-    .btn-live-on { background: rgba(16, 185, 129, 0.15); color: var(--green); border: 1px solid rgba(16, 185, 129, 0.4); display: inline-flex; align-items: center; gap: 6px; }
-    .btn-live-on:hover { background: rgba(16, 185, 129, 0.25); }
-    .btn-live-off { background: rgba(148, 163, 184, 0.12); color: var(--muted); border: 1px solid rgba(148, 163, 184, 0.3); display: inline-flex; align-items: center; gap: 6px; }
-    .btn-live-off:hover { background: rgba(148, 163, 184, 0.2); color: var(--text); }
-    .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px var(--green); display: inline-block; }
-    .live-dot.paused { background: var(--muted); box-shadow: none; }
-    .btn-primary { background: #0284c7; color: #fff; border-color: #0369a1; }
-    .btn-primary:hover { background: #0369a1; }
-    .btn-danger { background: rgba(244,63,94,0.15); color: var(--red); border-color: rgba(244,63,94,0.3); }
-    .btn-danger:hover { background: rgba(244,63,94,0.3); }
-    .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); backdrop-filter: blur(5px); justify-content: center; align-items: center; z-index: 100; }
-    .modal-box { background: #1e293b; border: 1px solid var(--border); border-radius: 16px; padding: 24px; width: 90%; max-width: 400px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); }
-    .modal-box h3 { margin-bottom: 16px; font-size: 1.2rem; }
-    .input-group { margin-bottom: 16px; }
-    .input-group label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 6px; }
-    .input-group input { width: 100%; padding: 10px; border-radius: 8px; background: #0f172a; border: 1px solid var(--border); color: #fff; font-size: 1rem; }
-    .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
-    footer { text-align: center; color: var(--muted); font-size: 0.8rem; margin-top: 20px; }
+    body {
+      padding-top: 1.5rem;
+      padding-bottom: 3rem;
+    }
+    .header-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+      border-bottom: 1px solid var(--pico-muted-border-color);
+      padding-bottom: 1rem;
+    }
+    .header-title h1 {
+      margin-bottom: 0.15rem;
+      font-size: 1.5rem;
+    }
+    .header-title small {
+      color: var(--pico-muted-color);
+    }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.25rem 0.65rem;
+      border-radius: 9999px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    .badge-ok {
+      background: rgba(16, 185, 129, 0.18);
+      color: var(--emerald);
+      border: 1px solid var(--emerald);
+    }
+    .badge-warn {
+      background: rgba(245, 158, 11, 0.18);
+      color: var(--amber);
+      border: 1px solid var(--amber);
+    }
+    .badge-err {
+      background: rgba(244, 63, 94, 0.18);
+      color: var(--rose);
+      border: 1px solid var(--rose);
+    }
+    .badge-accent {
+      background: rgba(56, 189, 248, 0.18);
+      color: var(--accent);
+      border: 1px solid var(--accent);
+    }
+    .badge-muted {
+      background: rgba(148, 163, 184, 0.12);
+      color: var(--pico-muted-color);
+      border: 1px solid rgba(148, 163, 184, 0.25);
+    }
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--emerald);
+      box-shadow: 0 0 6px var(--emerald);
+      display: inline-block;
+    }
+    .live-dot.paused {
+      background: var(--pico-muted-color);
+      box-shadow: none;
+    }
+    .hero-card {
+      text-align: center;
+      padding: 2rem 1.5rem;
+      margin-bottom: 1.25rem;
+      border: 1px solid var(--pico-muted-border-color);
+    }
+    .hero-val {
+      font-size: 3.5rem;
+      font-weight: 800;
+      color: var(--pico-color);
+      letter-spacing: -0.02em;
+      line-height: 1.1;
+      margin: 0.5rem 0;
+    }
+    .hero-unit {
+      font-size: 1.5rem;
+      font-weight: 500;
+      color: var(--pico-muted-color);
+      margin-left: 0.25rem;
+    }
+    .val-display {
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: var(--pico-color);
+      line-height: 1.1;
+      margin: 0.35rem 0;
+    }
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.4rem 0;
+      border-bottom: 1px solid var(--pico-muted-border-color);
+      font-size: 0.88rem;
+    }
+    .status-row:last-child {
+      border-bottom: none;
+    }
+    .card-heading {
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--pico-muted-color);
+      margin-bottom: 0.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    article {
+      margin-bottom: 1.25rem;
+      padding: 1.25rem;
+      border: 1px solid var(--pico-muted-border-color);
+    }
   </style>
 </head>
-<body>
-  <div class="container">
-    <header>
-      <div class="title-box">
-        <h1>Chint DDSU666 Modbus Master</h1>
-        <p>Seeed Studio XIAO ESP32-S3 &bull; Ultra-Fast Polling &bull; WebSocket Stream</p>
-      </div>
-      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-        <button id="live-toggle-btn" class="btn btn-live-on" onclick="toggleLiveMode()" title="Toggle live reading updates">
-          <span id="live-dot" class="live-dot"></span> <span id="live-text">Live: ON</span>
-        </button>
-        <span id="badge-stream" class="badge badge-stream">⚡ LIVE WS (15Hz)</span>
-        <span id="badge-meter" class="badge badge-offline">Meter Offline</span>
-        <button class="btn" onclick="openModal()">⚙️ Slave ID</button>
-        <a href="/update" class="btn btn-primary">📦 OTA</a>
-        <button class="btn btn-danger" onclick="rebootDevice()">↺ Reboot</button>
-      </div>
-    </header>
-
-    <div class="hero-card">
-      <div class="card-label">Active Grid Power</div>
-      <div class="hero-value"><span id="val-watts">0.0</span><span class="hero-unit">W</span></div>
-      <div id="badge-flow" class="hero-flow flow-import">Loading...</div>
+<body class="container" x-data="chintReaderApp()" x-init="init()">
+  <!-- Header -->
+  <header class="header-bar">
+    <div class="header-title">
+      <h1>Chint DDSU666 Modbus Master</h1>
+      <small>XIAO ESP32-S3 &bull; Dedicated Core 1 Modbus RTU &bull; WebSocket Stream (:81)</small>
     </div>
-
-    <div class="grid-4">
-      <div class="card">
-        <div class="card-label">Voltage</div>
-        <div class="card-val"><span id="val-volts">0.0</span><span class="card-unit">V</span></div>
-      </div>
-      <div class="card">
-        <div class="card-label">Current</div>
-        <div class="card-val"><span id="val-amps">0.00</span><span class="card-unit">A</span></div>
-      </div>
-      <div class="card">
-        <div class="card-label">Power Factor</div>
-        <div class="card-val"><span id="val-pf">1.00</span></div>
-      </div>
-      <div class="card">
-        <div class="card-label">Frequency</div>
-        <div class="card-val"><span id="val-freq">50.0</span><span class="card-unit">Hz</span></div>
-      </div>
+    <div class="header-actions">
+      <button class="outline" :class="liveMode ? 'contrast' : 'secondary'" @click="toggleLiveMode()" style="padding: 0.3rem 0.75rem; font-size: 0.82rem; margin-bottom: 0;">
+        <span class="live-dot" :class="{ 'paused': !liveMode }"></span>
+        <span x-text="liveMode ? 'Live: ON' : 'Live: PAUSED'"></span>
+      </button>
+      <span class="badge" :class="connBadgeClass" x-text="connBadgeText"></span>
+      <span class="badge" :class="meterOnline ? 'badge-ok' : 'badge-err'" x-text="meterOnline ? 'METER ONLINE' : 'METER OFFLINE'"></span>
+      <button class="outline contrast" @click="openModal()" style="padding: 0.3rem 0.75rem; font-size: 0.82rem; margin-bottom: 0;">⚙️ Slave ID</button>
+      <a href="/update" role="button" class="contrast" style="padding: 0.3rem 0.75rem; font-size: 0.82rem; margin-bottom: 0;">📦 OTA</a>
+      <button class="outline secondary" @click="rebootDevice()" style="padding: 0.3rem 0.75rem; font-size: 0.82rem; margin-bottom: 0; color: var(--rose); border-color: var(--rose);">↺ Reboot</button>
     </div>
+  </header>
 
-    <div class="grid-2">
-      <div class="card">
-        <div class="card-label">Total Import Energy</div>
-        <div class="card-val"><span id="val-imp">0.00</span><span class="card-unit">kWh</span></div>
-      </div>
-      <div class="card">
-        <div class="card-label">Total Export Energy</div>
-        <div class="card-val"><span id="val-exp">0.00</span><span class="card-unit">kWh</span></div>
-      </div>
+  <!-- Hero Card: Active Power -->
+  <article class="hero-card">
+    <div class="card-heading" style="justify-content: center;">Active Grid Power</div>
+    <div class="hero-val">
+      <span x-text="wattsDisplay"></span><span class="hero-unit">W</span>
     </div>
+    <span class="badge" :class="flowBadgeClass" x-text="flowText"></span>
+  </article>
 
-    <div class="card">
-      <div class="card-label" style="margin-bottom:12px;">Diagnostics &amp; Modbus Bus Health</div>
-      <div class="diag-box">
-        <div class="diag-row">
-          <span class="diag-label">Modbus Polling Speed</span>
-          <span class="diag-val" style="color:var(--accent);"><span id="val-hz">0.0</span> Hz</span>
-        </div>
-        <div class="diag-row">
-          <span class="diag-label">Meter Response Latency</span>
-          <span class="diag-val"><span id="val-lat">0.0</span> ms</span>
-        </div>
-        <div class="diag-row">
-          <span class="diag-label">Modbus Slave ID / Baud Rate</span>
-          <span class="diag-val">ID <span id="val-slave">1</span> &bull; 9600 8N1</span>
-        </div>
-        <div class="diag-row">
-          <span class="diag-label">Connected WebSocket Clients</span>
-          <span class="diag-val" style="color:var(--green);"><span id="val-clients">0</span> active</span>
-        </div>
-        <div class="diag-row">
-          <span class="diag-label">WebSocket Stream Endpoint</span>
-          <span class="diag-val"><span id="val-ws-url">ws://...:81/</span></span>
-        </div>
-        <div class="diag-row">
-          <span class="diag-label">System Uptime / Wi-Fi RSSI</span>
-          <span class="diag-val"><span id="val-uptime">0</span>s &bull; <span id="val-rssi">0</span> dBm</span>
-        </div>
-      </div>
-    </div>
-
-    <footer>
-      Chint DDSU666 Modbus RTU Reader &bull; WebSocket Stream on Port 81 &bull; Health API: <a href="/health" style="color:var(--accent); text-decoration:none;">/health</a>
-    </footer>
+  <!-- Electricals Grid -->
+  <div class="grid">
+    <article>
+      <div class="card-heading">Voltage</div>
+      <div class="val-display" x-text="(telemetry.volts ? telemetry.volts.toFixed(1) : '0.0') + ' V'"></div>
+    </article>
+    <article>
+      <div class="card-heading">Current</div>
+      <div class="val-display" x-text="(telemetry.amps ? telemetry.amps.toFixed(2) : '0.00') + ' A'"></div>
+    </article>
+    <article>
+      <div class="card-heading">Power Factor</div>
+      <div class="val-display" x-text="telemetry.pf ? telemetry.pf.toFixed(2) : '1.00'"></div>
+    </article>
+    <article>
+      <div class="card-heading">Frequency</div>
+      <div class="val-display" x-text="(telemetry.freq ? telemetry.freq.toFixed(1) : '50.0') + ' Hz'"></div>
+    </article>
   </div>
 
-  <div id="settings-modal" class="modal">
-    <div class="modal-box">
-      <h3>Modbus Settings</h3>
-      <div class="input-group">
-        <label>Chint DDSU666 Slave ID (Default 2 on this site)</label>
-        <input type="number" id="input-slave" min="1" max="247" value="2">
-      </div>
-      <div class="modal-actions">
-        <button class="btn" onclick="closeModal()">Cancel</button>
-        <button class="btn btn-primary" onclick="saveSettings()">Save &amp; Apply</button>
-      </div>
-    </div>
+  <!-- Energy Accumulators Grid -->
+  <div class="grid">
+    <article>
+      <div class="card-heading">Total Import Energy</div>
+      <div class="val-display" x-text="(telemetry.import_kwh ? telemetry.import_kwh.toFixed(2) : '0.00') + ' kWh'"></div>
+    </article>
+    <article>
+      <div class="card-heading">Total Export Energy</div>
+      <div class="val-display" x-text="(telemetry.export_kwh ? telemetry.export_kwh.toFixed(2) : '0.00') + ' kWh'"></div>
+    </article>
   </div>
+
+  <!-- Diagnostics & Modbus Bus Health -->
+  <article>
+    <div class="card-heading">🩺 Modbus Bus Health &amp; Telemetry Diagnostics</div>
+    <div class="status-row">
+      <span>Modbus Polling Speed</span>
+      <strong style="color: var(--accent);" x-text="(modbus.rate_hz ? modbus.rate_hz.toFixed(1) : '0.0') + ' Hz'"></strong>
+    </div>
+    <div class="status-row">
+      <span>Meter Response Latency</span>
+      <strong x-text="(modbus.latency_ms ? modbus.latency_ms.toFixed(1) : '0.0') + ' ms'"></strong>
+    </div>
+    <div class="status-row">
+      <span>Modbus Slave ID &amp; Baud Rate</span>
+      <strong x-text="'ID ' + (modbus.slave_id || 1) + ' • 9600 8N1'"></strong>
+    </div>
+    <div class="status-row">
+      <span>Total RS-485 Queries / CRC Errors</span>
+      <span style="font-size: 0.88rem;">
+        <strong x-text="(modbus.total_queries || 0).toLocaleString()"></strong> queries &bull;
+        <span style="color: var(--rose);" x-text="(modbus.crc_errors || 0) + ' CRC err'"></span>
+      </span>
+    </div>
+    <div class="status-row">
+      <span>Connected WebSocket Clients</span>
+      <strong style="color: var(--emerald);" x-text="(websocket.clients || 0) + ' active'"></strong>
+    </div>
+    <div class="status-row">
+      <span>WebSocket Stream Endpoint</span>
+      <span style="font-family: monospace; font-size: 0.85rem;" x-text="wsUrl"></span>
+    </div>
+    <div class="status-row">
+      <span>System Uptime &amp; Wi-Fi RSSI</span>
+      <span x-text="Math.floor((uptime_sec || 0) / 60) + ' min • ' + (wifi.rssi || 0) + ' dBm'"></span>
+    </div>
+  </article>
+
+  <!-- Modbus Slave ID Modal Dialog -->
+  <dialog :open="modalOpen">
+    <article style="max-width: 420px; width: 100%;">
+      <header style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <strong>⚙️ Modbus Slave ID Configuration</strong>
+        <button aria-label="Close" rel="prev" @click="closeModal()" style="border: none; background: none; font-size: 1.2rem; cursor: pointer; padding: 0;">✕</button>
+      </header>
+      <label>
+        Chint DDSU666 Slave ID (Default: 2)
+        <input type="number" x-model.number="inputSlave" min="1" max="247" style="margin-top: 0.5rem;">
+      </label>
+      <small style="color: var(--pico-muted-color); display: block; margin-top: 0.25rem;">
+        Saved to ESP32 NVS flash and applied immediately.
+      </small>
+      <footer style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
+        <button class="secondary outline" @click="closeModal()" style="width: auto; margin-bottom: 0;">Cancel</button>
+        <button @click="saveSettings()" style="width: auto; margin-bottom: 0;">Save &amp; Apply</button>
+      </footer>
+    </article>
+  </dialog>
+
+  <footer style="text-align: center; font-size: 0.8rem; color: var(--pico-muted-color); margin-top: 2rem;">
+    Chint DDSU666 Modbus RTU Reader &bull; WebSocket Stream on Port 81 &bull; Health API: <a href="/health">/health</a>
+  </footer>
 
   <script>
-    let ws = null;
-    let wsTimer = null;
-    let pollInterval = null;
-    let isLiveMode = localStorage.getItem('chint_live_mode') !== 'false';
-    const wsUrl = 'ws://' + window.location.hostname + ':81/';
-    document.getElementById('val-ws-url').innerText = wsUrl;
+    function chintReaderApp() {
+      return {
+        liveMode: localStorage.getItem('chint_live_mode') !== 'false',
+        connState: 'live',
+        meterOnline: true,
+        telemetry: { watts: 0, volts: 0, amps: 0, pf: 1, freq: 50, import_kwh: 0, export_kwh: 0 },
+        modbus: { rate_hz: 0, latency_ms: 0, slave_id: 2, total_queries: 0, crc_errors: 0, timeouts: 0 },
+        websocket: { clients: 0, packets_sent: 0 },
+        uptime_sec: 0,
+        wifi: { rssi: 0 },
+        modalOpen: false,
+        inputSlave: 2,
 
-    function updateLiveToggleUI() {
-      const btn = document.getElementById('live-toggle-btn');
-      const dot = document.getElementById('live-dot');
-      const txt = document.getElementById('live-text');
-      if (!btn || !dot || !txt) return;
+        ws: null,
+        wsTimer: null,
+        pollTimer: null,
 
-      if (isLiveMode) {
-        btn.className = 'btn btn-live-on';
-        dot.className = 'live-dot';
-        txt.innerText = 'Live: ON';
-      } else {
-        btn.className = 'btn btn-live-off';
-        dot.className = 'live-dot paused';
-        txt.innerText = 'Live: PAUSED';
-      }
-    }
+        get wsUrl() {
+          const host = window.location.hostname || "10.0.0.197";
+          return `ws://${host}:81/`;
+        },
 
-    function toggleLiveMode() {
-      isLiveMode = !isLiveMode;
-      localStorage.setItem('chint_live_mode', isLiveMode ? 'true' : 'false');
-      updateLiveToggleUI();
-
-      if (isLiveMode) {
-        setStreamStatus(true);
-        connectWS();
-        startPolling();
-      } else {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.close();
-        }
-        if (wsTimer) {
-          clearTimeout(wsTimer);
-          wsTimer = null;
-        }
-        stopPolling();
-        setStreamStatus(false);
-      }
-    }
-
-    function setStreamStatus(live) {
-      const badge = document.getElementById('badge-stream');
-      if (!badge) return;
-      if (!isLiveMode) {
-        badge.innerText = '⏸️ UPDATES PAUSED';
-        badge.className = 'badge';
-        badge.style = 'background:rgba(148,163,184,0.15); color:var(--muted); border:1px solid rgba(148,163,184,0.3);';
-      } else if (live) {
-        badge.innerText = '⚡ LIVE WS (15Hz)';
-        badge.className = 'badge badge-stream';
-        badge.style = '';
-      } else {
-        badge.innerText = '⏱ HTTP POLL (2s)';
-        badge.className = 'badge';
-        badge.style = 'background:rgba(245,158,11,0.2); color:var(--amber); border:1px solid rgba(245,158,11,0.4);';
-      }
-    }
-
-    function connectWS() {
-      if (!isLiveMode) return;
-      try {
-        ws = new WebSocket(wsUrl);
-      } catch(e) {
-        setStreamStatus(false);
-        return;
-      }
-
-      ws.onopen = () => {
-        setStreamStatus(true);
-        if (wsTimer) { clearTimeout(wsTimer); wsTimer = null; }
-      };
-
-      ws.onmessage = (e) => {
-        if (!isLiveMode) return;
-        try {
-          const data = JSON.parse(e.data);
-          if (data.type === 'telemetry' || data.type === 'welcome') {
-            updateUI(data);
+        init() {
+          if (this.liveMode) {
+            this.connectWS();
+            this.startPolling();
+          } else {
+            this.connState = 'paused';
           }
-        } catch(err) {}
-      };
 
-      ws.onclose = () => {
-        if (!isLiveMode) return;
-        setStreamStatus(false);
-        if (!wsTimer) {
-          wsTimer = setTimeout(() => { wsTimer = null; if (isLiveMode) connectWS(); }, 2500);
-        }
-      };
+          document.addEventListener("visibilitychange", () => {
+            if (!this.liveMode) return;
+            if (document.hidden) {
+              if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.close();
+              this.stopPolling();
+            } else {
+              this.connectWS();
+              this.startPolling();
+            }
+          });
+        },
 
-      ws.onerror = (err) => {
-        setStreamStatus(false);
-        ws.close();
-      };
-    }
+        get connBadgeClass() {
+          if (!this.liveMode || this.connState === 'paused') return 'badge-muted';
+          if (this.connState === 'live') return 'badge-accent';
+          if (this.connState === 'poll') return 'badge-warn';
+          return 'badge-err';
+        },
+        get connBadgeText() {
+          if (!this.liveMode || this.connState === 'paused') return '⏸️ UPDATES PAUSED';
+          if (this.connState === 'live') return '⚡ LIVE WS (15Hz)';
+          if (this.connState === 'poll') return '⏱ HTTP POLL (2s)';
+          return '🔌 RECONNECTING...';
+        },
+        get wattsDisplay() {
+          const w = this.telemetry.watts || 0;
+          return Math.abs(w).toFixed(1);
+        },
+        get flowBadgeClass() {
+          const w = this.telemetry.watts || 0;
+          if (w > 10.0) return 'badge-warn';
+          if (w < -10.0) return 'badge-ok';
+          return 'badge-accent';
+        },
+        get flowText() {
+          const w = this.telemetry.watts || 0;
+          if (w > 10.0) return '↓ Grid Import';
+          if (w < -10.0) return '↑ Solar Export';
+          return '⚡ Balanced';
+        },
 
-    function updateUI(d) {
-      if (!isLiveMode || !d) return;
-      if (d.watts !== undefined) document.getElementById('val-watts').innerText = d.watts.toFixed(1);
-      if (d.volts !== undefined) document.getElementById('val-volts').innerText = d.volts.toFixed(1);
-      if (d.amps !== undefined) document.getElementById('val-amps').innerText = d.amps.toFixed(2);
-      if (d.pf !== undefined) document.getElementById('val-pf').innerText = d.pf.toFixed(2);
-      if (d.freq !== undefined) document.getElementById('val-freq').innerText = d.freq.toFixed(1);
-      if (d.import_kwh !== undefined) document.getElementById('val-imp').innerText = d.import_kwh.toFixed(2);
-      if (d.export_kwh !== undefined) document.getElementById('val-exp').innerText = d.export_kwh.toFixed(2);
-      if (d.poll_hz !== undefined) document.getElementById('val-hz').innerText = d.poll_hz.toFixed(1);
-      if (d.latency_ms !== undefined) document.getElementById('val-lat').innerText = d.latency_ms.toFixed(1);
-      if (d.slave_id !== undefined) document.getElementById('val-slave').innerText = d.slave_id;
+        toggleLiveMode() {
+          this.liveMode = !this.liveMode;
+          localStorage.setItem('chint_live_mode', this.liveMode ? 'true' : 'false');
+          if (this.liveMode) {
+            this.connState = 'live';
+            this.connectWS();
+            this.startPolling();
+          } else {
+            if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.close();
+            if (this.wsTimer) {
+              clearTimeout(this.wsTimer);
+              this.wsTimer = null;
+            }
+            this.stopPolling();
+            this.connState = 'paused';
+          }
+        },
 
-      const meterBadge = document.getElementById('badge-meter');
-      if (d.meter_online) {
-        meterBadge.innerText = 'Meter Online';
-        meterBadge.className = 'badge badge-online';
-      } else {
-        meterBadge.innerText = 'Meter Offline';
-        meterBadge.className = 'badge badge-offline';
-      }
+        connectWS() {
+          if (!this.liveMode) return;
+          try {
+            this.ws = new WebSocket(this.wsUrl);
+          } catch(e) {
+            this.connState = 'poll';
+            return;
+          }
 
-      const flowBadge = document.getElementById('badge-flow');
-      if (d.watts > 10) {
-        flowBadge.innerText = 'Grid Import';
-        flowBadge.className = 'hero-flow flow-import';
-      } else if (d.watts < -10) {
-        flowBadge.innerText = 'Solar Export';
-        flowBadge.className = 'hero-flow flow-export';
-      } else {
-        flowBadge.innerText = 'Balanced';
-        flowBadge.className = 'hero-flow';
-      }
-    }
+          this.ws.onopen = () => {
+            this.connState = 'live';
+            if (this.wsTimer) {
+              clearTimeout(this.wsTimer);
+              this.wsTimer = null;
+            }
+          };
 
-    function pollHealth() {
-      if (!isLiveMode) return;
-      fetch('/health')
-        .then(r => r.json())
-        .then(data => {
-          if (!isLiveMode) return;
-          if (data.websocket) document.getElementById('val-clients').innerText = data.websocket.clients;
-          if (data.uptime_sec !== undefined) document.getElementById('val-uptime').innerText = data.uptime_sec;
-          if (data.wifi && data.wifi.rssi !== undefined) document.getElementById('val-rssi').innerText = data.wifi.rssi;
-          if (!ws || ws.readyState !== WebSocket.OPEN) {
-            updateUI({
-              watts: data.telemetry.watts,
-              volts: data.telemetry.volts,
-              amps: data.telemetry.amps,
-              pf: data.telemetry.pf,
-              freq: data.telemetry.freq,
-              import_kwh: data.telemetry.import_kwh,
-              export_kwh: data.telemetry.export_kwh,
-              poll_hz: data.modbus.rate_hz,
-              latency_ms: data.modbus.latency_ms,
-              meter_online: data.modbus.meter_online,
-              slave_id: data.modbus.slave_id
+          this.ws.onmessage = (e) => {
+            if (!this.liveMode) return;
+            try {
+              const data = JSON.parse(e.data);
+              if (data.type === 'telemetry' || data.type === 'welcome') {
+                this.applyTelemetry(data);
+              }
+            } catch(err) {}
+          };
+
+          this.ws.onclose = () => {
+            if (!this.liveMode) return;
+            this.connState = 'poll';
+            if (!this.wsTimer) {
+              this.wsTimer = setTimeout(() => {
+                this.wsTimer = null;
+                if (this.liveMode) this.connectWS();
+              }, 2500);
+            }
+          };
+
+          this.ws.onerror = () => {
+            this.connState = 'poll';
+          };
+        },
+
+        applyTelemetry(d) {
+          if (!this.liveMode || !d) return;
+          if (d.watts !== undefined) this.telemetry.watts = d.watts;
+          if (d.volts !== undefined) this.telemetry.volts = d.volts;
+          if (d.amps !== undefined) this.telemetry.amps = d.amps;
+          if (d.pf !== undefined) this.telemetry.pf = d.pf;
+          if (d.freq !== undefined) this.telemetry.freq = d.freq;
+          if (d.import_kwh !== undefined) this.telemetry.import_kwh = d.import_kwh;
+          if (d.export_kwh !== undefined) this.telemetry.export_kwh = d.export_kwh;
+
+          if (d.poll_hz !== undefined) this.modbus.rate_hz = d.poll_hz;
+          if (d.latency_ms !== undefined) this.modbus.latency_ms = d.latency_ms;
+          if (d.slave_id !== undefined) this.modbus.slave_id = d.slave_id;
+          if (d.meter_online !== undefined) this.meterOnline = d.meter_online;
+        },
+
+        startPolling() {
+          if (!this.pollTimer && this.liveMode) {
+            this.pollHealth();
+            this.pollTimer = setInterval(() => this.pollHealth(), 2000);
+          }
+        },
+
+        stopPolling() {
+          if (this.pollTimer) {
+            clearInterval(this.pollTimer);
+            this.pollTimer = null;
+          }
+        },
+
+        pollHealth() {
+          if (!this.liveMode) return;
+          fetch('/health')
+            .then(r => r.json())
+            .then(data => {
+              if (!this.liveMode || !data) return;
+              if (data.websocket) this.websocket = Object.assign({}, this.websocket, data.websocket);
+              if (data.uptime_sec !== undefined) this.uptime_sec = data.uptime_sec;
+              if (data.wifi) this.wifi = Object.assign({}, this.wifi, data.wifi);
+              if (data.modbus) {
+                this.modbus = Object.assign({}, this.modbus, data.modbus);
+                if (data.modbus.meter_online !== undefined) this.meterOnline = data.modbus.meter_online;
+              }
+              if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+                if (data.telemetry) this.applyTelemetry(data.telemetry);
+              }
+            }).catch(e => {
+              if (this.connState !== 'live') this.connState = 'reconnecting';
             });
+        },
+
+        openModal() {
+          this.inputSlave = this.modbus.slave_id || 2;
+          this.modalOpen = true;
+          fetch('/health').then(r => r.json()).then(d => {
+            if (d && d.modbus && d.modbus.slave_id) {
+              this.inputSlave = d.modbus.slave_id;
+            }
+          }).catch(e => {});
+        },
+
+        closeModal() {
+          this.modalOpen = false;
+        },
+
+        saveSettings() {
+          const slave = parseInt(this.inputSlave, 10);
+          if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify({ action: 'set_slave', slave: slave }));
+            this.closeModal();
+            setTimeout(() => this.pollHealth(), 500);
+          } else {
+            fetch('/api/settings?slave=' + slave, { method: 'POST' })
+              .then(r => r.json())
+              .then(d => {
+                this.closeModal();
+                this.pollHealth();
+              }).catch(e => this.closeModal());
           }
-        }).catch(e => {});
-    }
+        },
 
-    function startPolling() {
-      if (!pollInterval && isLiveMode) {
-        pollHealth();
-        pollInterval = setInterval(pollHealth, 2000);
-      }
-    }
-
-    function stopPolling() {
-      if (pollInterval) {
-        clearInterval(pollInterval);
-        pollInterval = null;
-      }
-    }
-
-    function openModal() {
-      document.getElementById('settings-modal').style.display = 'flex';
-      fetch('/health').then(r=>r.json()).then(d=>{
-        if (d.modbus && d.modbus.slave_id) {
-          document.getElementById('input-slave').value = d.modbus.slave_id;
+        rebootDevice() {
+          if (!confirm('Reboot the Chint Reader device?')) return;
+          if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify({ action: 'reboot' }));
+          } else {
+            fetch('/reboot', { method: 'POST' });
+          }
+          alert('Device rebooting... reloading page in 6s');
+          setTimeout(() => location.reload(), 6000);
         }
-      });
-    }
-
-    function closeModal() {
-      document.getElementById('settings-modal').style.display = 'none';
-    }
-
-    function saveSettings() {
-      const slave = parseInt(document.getElementById('input-slave').value);
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ action: 'set_slave', slave: slave }));
-        closeModal();
-        setTimeout(pollHealth, 500);
-      } else {
-        fetch('/api/settings?slave=' + slave, { method: 'POST' })
-          .then(r => r.json())
-          .then(d => {
-            closeModal();
-            pollHealth();
-          }).catch(e => closeModal());
-      }
-    }
-
-    function rebootDevice() {
-      if (!confirm('Reboot the Chint Reader device?')) return;
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ action: 'reboot' }));
-      } else {
-        fetch('/reboot', { method: 'POST' });
-      }
-      alert('Device rebooting... reloading page in 6s');
-      setTimeout(() => location.reload(), 6000);
-    }
-
-    document.addEventListener("visibilitychange", () => {
-      if (!isLiveMode) return;
-      if (document.hidden) {
-        if (ws && ws.readyState === WebSocket.OPEN) ws.close();
-        stopPolling();
-      } else {
-        connectWS();
-        startPolling();
-      }
-    });
-
-    updateLiveToggleUI();
-    if (isLiveMode) {
-      connectWS();
-      startPolling();
-    } else {
-      setStreamStatus(false);
+      };
     }
   </script>
 </body>
