@@ -253,7 +253,7 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     </div>
   </header>
 
-  <!-- Hero Card: Active Power & Bidirectional Flow Bar -->
+  <!-- Hero Card: Grid Active Power & Bidirectional Flow Bar -->
   <article>
     <div class="card-heading">
       <span>⚡ Grid Active Power</span>
@@ -304,9 +304,9 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
       <div class="status-row" style="align-items: center;">
         <div>
           <span>Chint Slave Address</span>
-          <div style="font-size: 0.75rem; color: var(--pico-muted-color);">Physical meter Slave ID (1..247)</div>
+          <div style="font-size: 0.75rem; color: var(--pico-muted-color);">Physical Grid meter Slave ID (1..247)</div>
         </div>
-        <input type="number" x-model.number="inputSlave" min="1" max="247" style="width: auto; max-width: 100px; font-size: 0.82rem; padding: 0.25rem 0.5rem;">
+        <input type="number" x-model.number="inputSlave" min="1" max="247" style="width: auto; max-width: 90px; font-size: 0.82rem; padding: 0.25rem 0.5rem;">
       </div>
       <div style="display: flex; gap: 0.75rem; align-items: center; margin-top: 1rem;">
         <button @click="saveSettings()" style="width: auto; margin-bottom: 0;">Save &amp; Apply</button>
@@ -511,9 +511,9 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
           const d = new Date().toISOString().replace('T', ' ').substring(0, 19);
           const text = [
             `=== Chint DDSU666 Modbus Master Diagnostics (${d}) ===`,
-            `Meter: ${this.meterOnline ? 'ONLINE' : 'OFFLINE'} | Slave ID: ${this.modbus.slave_id}`,
+            `Grid Meter: ${this.meterOnline ? 'ONLINE' : 'OFFLINE'} | Slave ID: ${this.modbus.slave_id}`,
             `Grid Power: ${this.telemetry.watts.toFixed(1)} W | ${this.telemetry.volts.toFixed(1)} V | ${this.telemetry.amps.toFixed(2)} A | PF: ${this.telemetry.pf.toFixed(2)}`,
-            `Accumulated: Import=${this.telemetry.import_kwh.toFixed(2)} kWh | Export=${this.telemetry.export_kwh.toFixed(2)} kWh`,
+            `Accumulated Grid: Import=${this.telemetry.import_kwh.toFixed(2)} kWh | Export=${this.telemetry.export_kwh.toFixed(2)} kWh`,
             `Modbus RTU: Rate=${this.modbus.rate_hz.toFixed(1)} Hz | Latency=${this.modbus.latency_ms.toFixed(1)} ms | Queries=${this.modbus.total_queries} | CRC Errors=${this.modbus.crc_errors}`,
             `WebSocket: Clients=${this.websocket.clients} | Stream=${this.wsUrl}`,
             `Wi-Fi: RSSI=${this.wifi.rssi} dBm | Uptime=${Math.floor(this.uptime_sec / 60)} min`
@@ -661,7 +661,7 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
             this.configStatusColor = "var(--emerald)";
             setTimeout(() => { this.pollHealth(); this.configStatus = ""; }, 1500);
           } else {
-            fetch('/api/settings?slave=' + slave, { method: 'POST' })
+            fetch(`/api/settings?slave=${slave}`, { method: 'POST' })
               .then(r => r.json())
               .then(d => {
                 this.configStatus = "Applied ✓";

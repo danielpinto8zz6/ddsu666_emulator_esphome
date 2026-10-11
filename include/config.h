@@ -47,9 +47,12 @@ constexpr uint8_t MODBUS_SLAVE_PV         = 1;  // Slave ID 1: PV Inverter Strin
 // Watchdogs & Timings
 constexpr uint32_t WATCHDOG_TIMEOUT_SEC   = 10; // Fail-safe timeout in seconds (Grid & PV)
 
-// Chint DDSU666 Master (Seeed Studio XIAO ESP32-S3) Configuration
+// Chint DDSU666 Master (LilyGO T-CAN485) Configuration
+#ifndef CHINT_LILYGO_IP
+#define CHINT_LILYGO_IP                   "10.0.0.110"
+#endif
 #ifndef CHINT_XIAO_IP
-#define CHINT_XIAO_IP                     "10.0.0.197"
+#define CHINT_XIAO_IP                     CHINT_LILYGO_IP
 #endif
 constexpr uint16_t CHINT_XIAO_WS_PORT     = 81;
 constexpr const char* CHINT_XIAO_WS_PATH  = "/";
@@ -83,11 +86,14 @@ enum GridPriorityMode : uint8_t {
 
 // PV Solar Generation Source Priority Modes:
 enum PvPriorityMode : uint8_t {
-  PV_PRI_OPENDTU_ONLY = 0, // OpenDTU Solar PV via MQTT (Default)
-  PV_PRI_DISABLED     = 1  // PV Meter Disabled / Standby
+  PV_PRI_AUTO         = 0, // Auto: Eastron SDM120 -> OpenDTU MQTT Fallback (Default)
+  PV_PRI_EASTRON_ONLY = 1, // Eastron SDM120 Only (via Chint Master WS)
+  PV_PRI_OPENDTU_ONLY = 2, // OpenDTU Solar PV via MQTT Only
+  PV_PRI_DISABLED     = 3, // PV Meter Disabled / Standby
+  PV_PRI_FAKE_50W     = 4  // Fake 50W Solar Production (Test microinverters turn-on)
 };
 
-#define DEFAULT_PV_PRIORITY_MODE          PV_PRI_OPENDTU_ONLY
+#define DEFAULT_PV_PRIORITY_MODE          PV_PRI_AUTO
 
 // Web OTA Authentication Password (empty = disabled / no password)
 #ifndef OTA_PASSWORD

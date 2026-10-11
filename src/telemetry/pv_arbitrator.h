@@ -38,5 +38,6 @@ public:
 
 private:
   PvPriorityMode _mode;
+  mutable uint32_t _lastEastronLocalTime = 0;
   static ITelemetrySource* findSource(const std::vector<ITelemetrySource*> &sources, const char *id);
 };

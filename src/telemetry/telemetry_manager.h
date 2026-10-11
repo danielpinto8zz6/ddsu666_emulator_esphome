@@ -71,6 +71,7 @@ public:
     return (_lastGridMsgTime != 0) && (millis() - _lastGridMsgTime <= timeoutMs);
   }
   bool isPvRecent(uint32_t timeoutMs = 15000) const {
+    if (_pvArbitrator && _pvArbitrator->getMode() == PV_PRI_FAKE_50W) return true;
     return (_lastPvMsgTime != 0) && (millis() - _lastPvMsgTime <= timeoutMs);
   }
 

@@ -65,12 +65,9 @@ void ChintWsSource::handleMessage(const uint8_t *payload, size_t length) {
   if (doc.containsKey("type")) {
     const char *type = doc["type"] | "";
     if (strcmp(type, "telemetry") == 0 || strcmp(type, "welcome") == 0) {
+      // 1. Grid Telemetry (Chint DDSU666)
       bool meterOnline = doc["meter_online"] | true;
-      if (!meterOnline) {
-        // Physical Chint meter not responding to Xiao; ignore to let fallback take over
-        return;
-      }
-      if (doc.containsKey("volts") && doc.containsKey("watts")) {
+      if (meterOnline && doc.containsKey("volts") && doc.containsKey("watts")) {
         meas.voltage = doc["volts"].as<float>();
         meas.active_power_w = doc["watts"].as<float>();
         meas.current = doc["amps"] | 0.0f;
@@ -79,6 +76,27 @@ void ChintWsSource::handleMessage(const uint8_t *payload, size_t length) {
         meas.import_kwh = doc["import_kwh"] | -1.0f;
         meas.export_kwh = doc["export_kwh"] | -1.0f;
         valid = (!std::isnan(meas.voltage) && meas.voltage >= 180.0f && meas.voltage <= 280.0f);
+      }
+
+      // 2. Solar PV Telemetry (Eastron SDM120 multi-drop meter)
+      if (doc.containsKey("pv")) {
+        JsonObject pvObj = doc["pv"];
+        bool pvOnline = pvObj["online"] | (pvObj["meter_online"] | false);
+        if (pvOnline && pvObj.containsKey("watts")) {
+          PvMeasurement pvMeas;
+          float w = pvObj["watts"].as<float>();
+          pvMeas.active_power_w = std::fabs(w);
+          if (pvMeas.active_power_w < 0.5f) {
+            pvMeas.active_power_w = 0.0f;
+          }
+          pvMeas.yield_kwh = pvObj["yield_kwh"] | -1.0f;
+          if (!std::isnan(pvMeas.active_power_w)) {
+            _lastPvMsgTime = millis();
+            if (_sink) {
+              _sink->reportPvMeasurement("EASTRON_WS", pvMeas);
+            }
+          }
+        }
       }
     }
   }
@@ -101,12 +119,11 @@ void ChintWsSource::handleMessage(const uint8_t *payload, size_t length) {
     }
   }
 
-  if (!valid) return;
-
-  _lastMsgTime = millis();
-
-  if (_sink) {
-    _sink->reportGridMeasurement(getId(), meas);
+  if (valid) {
+    _lastMsgTime = millis();
+    if (_sink) {
+      _sink->reportGridMeasurement(getId(), meas);
+    }
   }
 }
 
@@ -115,4 +132,7 @@ void ChintWsSource::populateHealth(JsonObject &obj) const {
   obj["ip"] = _ip;
   float age = getAgeSeconds();
   obj["age_sec"] = (age >= 0.0f) ? std::round(age * 10.0f) / 10.0f : -1.0f;
+  float pvAge = (_lastPvMsgTime != 0) ? (float)(millis() - _lastPvMsgTime) / 1000.0f : -1.0f;
+  obj["pv_age_sec"] = (pvAge >= 0.0f) ? std::round(pvAge * 10.0f) / 10.0f : -1.0f;
+  obj["pv_recent"] = isPvRecent(5000);
 }

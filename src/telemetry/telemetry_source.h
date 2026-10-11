@@ -69,6 +69,20 @@ public:
   virtual bool isPvSource() const { return false; }
 
   /**
+   * @brief Check if source has provided PV solar data recently within the given timeout window.
+   */
+  virtual bool isPvRecent(uint32_t timeoutMs = 5000) const {
+    return isRecent(timeoutMs);
+  }
+
+  /**
+   * @brief Millis timestamp of the last successfully received PV message.
+   */
+  virtual uint32_t getLastPvMessageTime() const {
+    return getLastMessageTime();
+  }
+
+  /**
    * @brief Key under which this source is serialized in the /health JSON document (e.g., "chint", "shelly").
    */
   virtual const char* getHealthKey() const = 0;

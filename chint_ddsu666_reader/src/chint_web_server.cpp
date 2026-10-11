@@ -40,7 +40,11 @@ void ChintWebServer::handleHealthJson() {
 
   StaticJsonDocument<1024> doc;
   doc["status"] = stats.meter_online ? "HEALTHY" : "DEGRADED";
+#if defined(BOARD_LILYGO_TCAN485)
+  doc["device"] = "LilyGO T-CAN485 Chint Master (Clean Core Split)";
+#else
   doc["device"] = "Seeed Studio XIAO ESP32-S3 Chint Master (Clean Core Split)";
+#endif
   doc["uptime_sec"] = (uint32_t)(millis() / 1000);
   doc["free_heap"] = (uint32_t)ESP.getFreeHeap();
 

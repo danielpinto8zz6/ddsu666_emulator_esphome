@@ -16,6 +16,7 @@ struct ChintTelemetry {
   float import_kwh;       // Total active import energy (kWh)
   float export_kwh;       // Total active export energy (kWh)
   uint32_t last_update;   // Millis timestamp of latest valid reading
+
 };
 
 /**

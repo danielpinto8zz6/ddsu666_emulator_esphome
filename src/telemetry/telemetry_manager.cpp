@@ -60,6 +60,9 @@ void TelemetryManager::begin() {
 
   _gridArbitrator->setMode((GridPriorityMode)cfg.getGridPriority());
   _pvArbitrator->setMode((PvPriorityMode)cfg.getPvPriority());
+  if (_pvArbitrator->getMode() == PV_PRI_FAKE_50W) {
+    MeterState::updatePvPower(50.0f);
+  }
   setFilterMode(cfg.getFilterMode());
 
   WiFi.mode(WIFI_STA);
@@ -140,6 +143,17 @@ bool TelemetryManager::canSourceUpdateGrid(const char *sourceId) const {
 void TelemetryManager::setPvPriority(PvPriorityMode mode) {
   _pvArbitrator->setMode(mode);
   AppConfig::getInstance().setPvPriority((uint8_t)mode);
+  if (mode == PV_PRI_FAKE_50W) {
+    MeterState::updatePvPower(50.0f);
+    _lastPvMsgTime = millis();
+    _pvWatchdogTriggered = false;
+  } else if (mode == PV_PRI_DISABLED) {
+    MeterState::zeroPvPower();
+    _pvWatchdogTriggered = true;
+  } else {
+    _lastPvMsgTime = 0;
+    MeterState::zeroPvPower();
+  }
   Serial.printf("[Priority] PV Priority Mode set to %u: %s\n", (unsigned)mode, getPvPriorityDescription());
 }
 
@@ -264,7 +278,11 @@ void TelemetryManager::checkWatchdogs() {
   }
 
   // PV Watchdog (15s timeout)
-  if (!_pvWatchdogTriggered && (now - _lastPvMsgTime > (WATCHDOG_TIMEOUT_SEC * 1000))) {
+  if (_pvArbitrator->getMode() == PV_PRI_FAKE_50W) {
+    _lastPvMsgTime = now;
+    _pvWatchdogTriggered = false;
+    MeterState::updatePvPower(50.0f);
+  } else if (!_pvWatchdogTriggered && (now - _lastPvMsgTime > (WATCHDOG_TIMEOUT_SEC * 1000))) {
     Serial.println("[FAILSAFE] PV data timeout! Zeroing PV power.");
     MeterState::zeroPvPower();
     _pvWatchdogTriggered = true;

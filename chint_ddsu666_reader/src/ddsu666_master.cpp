@@ -66,7 +66,7 @@ uint16_t DDSU666Master::calculateCRC(const uint8_t *buffer, size_t length) {
 }
 
 float DDSU666Master::parseIEEE754(const uint8_t *p) {
-  // Chint DDSU666 stores standard 32-bit Big-Endian IEEE-754 float
+  // Standard 32-bit Big-Endian IEEE-754 float
   uint32_t raw = ((uint32_t)p[0] << 24) |
                  ((uint32_t)p[1] << 16) |
                  ((uint32_t)p[2] << 8)  |
@@ -85,10 +85,19 @@ void DDSU666Master::begin(uint8_t slaveId) {
     _slaveId = slaveId;
   }
   _stats.slave_id = _slaveId;
-  Serial.printf("[DDSU666Master] Configured Modbus Slave ID: %u (default was: %u)\n", _slaveId, slaveId);
+
+  Serial.printf("[DDSU666Master] Chint Slave ID: %u\n", _slaveId);
 
   pinMode(PIN_RS485_DE_RE, OUTPUT);
   digitalWrite(PIN_RS485_DE_RE, LOW); // Receive mode
+
+#if HAS_RS485_POWER_PINS
+  pinMode(PIN_RS485_5V_EN, OUTPUT);
+  pinMode(PIN_RS485_CHIP_EN, OUTPUT);
+  digitalWrite(PIN_RS485_5V_EN, HIGH);   // Enable 5V boost converter
+  digitalWrite(PIN_RS485_CHIP_EN, HIGH); // Enable MAX13487/transceiver chip
+  delay(50);
+#endif
 
 #ifdef STATUS_LED_PIN
   pinMode(STATUS_LED_PIN, OUTPUT);
@@ -124,7 +133,7 @@ void DDSU666Master::setSlaveId(uint8_t slaveId) {
   portEXIT_CRITICAL(&_spinlock);
 
   _prefs.putUChar("slave_id", slaveId);
-  Serial.printf("[DDSU666Master] Persisted Modbus Slave ID %u to NVS\n", slaveId);
+  Serial.printf("[DDSU666Master] Persisted Chint Slave ID %u to NVS\n", slaveId);
 }
 
 ChintTelemetry DDSU666Master::getTelemetry() {
@@ -143,13 +152,13 @@ ModbusMasterStats DDSU666Master::getStats() {
   return copy;
 }
 
-bool DDSU666Master::queryRegisters(uint16_t startAddress, uint16_t count, uint8_t *responseBuffer, size_t &responseLen, float &latencyMs) {
+bool DDSU666Master::queryModbus(uint8_t slaveId, uint8_t fc, uint16_t startAddress, uint16_t count, uint8_t *responseBuffer, size_t &responseLen, float &latencyMs) {
   // Clear any residual garbage in the RX FIFO
   uart_flush_input(UART_NUM_1);
 
   uint8_t request[8];
-  request[0] = _slaveId;
-  request[1] = 0x03; // Function Code 0x03: Read Holding Registers
+  request[0] = slaveId;
+  request[1] = fc;
   request[2] = (uint8_t)((startAddress >> 8) & 0xFF);
   request[3] = (uint8_t)(startAddress & 0xFF);
   request[4] = (uint8_t)((count >> 8) & 0xFF);
@@ -174,9 +183,10 @@ bool DDSU666Master::queryRegisters(uint16_t startAddress, uint16_t count, uint8_
   // Expected response size: 1 (ID) + 1 (FC) + 1 (ByteCount) + count*2 (Data) + 2 (CRC) = 5 + count*2
   size_t expectedLen = 5 + (count * 2);
   size_t bytesRead = 0;
+  uint32_t timeoutMs = MODBUS_TIMEOUT_MS;
   uint32_t startWait = millis();
 
-  while ((millis() - startWait) < MODBUS_TIMEOUT_MS) {
+  while ((millis() - startWait) < timeoutMs) {
     size_t available = 0;
     uart_get_buffered_data_len(UART_NUM_1, &available);
     if (available > 0) {
@@ -200,7 +210,7 @@ bool DDSU666Master::queryRegisters(uint16_t startAddress, uint16_t count, uint8_
   }
 
   // Validate Slave ID & Function Code
-  if (responseBuffer[0] != _slaveId || responseBuffer[1] != 0x03) {
+  if (responseBuffer[0] != slaveId || responseBuffer[1] != fc) {
     return false;
   }
 
@@ -211,25 +221,22 @@ bool DDSU666Master::queryRegisters(uint16_t startAddress, uint16_t count, uint8_
   return (expectedCrc == receivedCrc);
 }
 
+bool DDSU666Master::queryRegisters(uint16_t startAddress, uint16_t count, uint8_t *responseBuffer, size_t &responseLen, float &latencyMs) {
+  return queryModbus(_slaveId, 0x03, startAddress, count, responseBuffer, responseLen, latencyMs);
+}
+
 void DDSU666Master::loop() {
   uint8_t buffer[64];
   size_t respLen = 0;
   float latency = 0.0f;
+  uint32_t now = millis();
 
   portENTER_CRITICAL(&_spinlock);
   _stats.total_queries++;
   portEXIT_CRITICAL(&_spinlock);
 
-  // 1. Ultra-Fast Real-Time Telemetry Query:
-  // Reads 16 registers (32 bytes) starting at 0x2000
-  // 0x2000: Voltage (V)
-  // 0x2002: Current (A)
-  // 0x2004: Active Power (kW)
-  // 0x2006: Reactive Power (kVAR)
-  // 0x2008: Apparent Power (kVA)
-  // 0x200A: Power Factor
-  // 0x200C: Reserved/Phase Angle
-  // 0x200E: Frequency (Hz)
+  // 1. Ultra-Fast Real-Time Telemetry Query for Chint DDSU666 (Slave ID 2)
+  // Reads 16 registers (32 bytes) starting at 0x2000 using Function Code 0x03
   bool success = queryRegisters(0x2000, 16, buffer, respLen, latency);
 
   if (success && respLen >= 37) {
@@ -241,9 +248,8 @@ void DDSU666Master::loop() {
     float q   = parseIEEE754(&data[12]);
     float s   = parseIEEE754(&data[16]);
     float pf  = parseIEEE754(&data[20]);
-    float f   = parseIEEE754(&data[28]); // 0x200E is offset 14 registers = 28 bytes
+    float f   = parseIEEE754(&data[28]);
 
-    // Chint active power is in kW -> convert to Watts
     float watts = p_kw * 1000.0f;
 
     portENTER_CRITICAL(&_spinlock);
@@ -255,7 +261,7 @@ void DDSU666Master::loop() {
     if (!std::isnan(pf) && pf >= -1.0f && pf <= 1.0f) _telemetry.power_factor = pf;
     if (!std::isnan(f) && f > 40.0f && f < 65.0f) _telemetry.frequency = f;
 
-    _telemetry.last_update = millis();
+    _telemetry.last_update = now;
     _stats.successful_queries++;
     _stats.response_latency_ms = latency;
     _stats.meter_online = true;
@@ -264,16 +270,6 @@ void DDSU666Master::loop() {
 #ifdef STATUS_LED_PIN
     digitalWrite(STATUS_LED_PIN, LOW); // Flash LED on valid response
 #endif
-
-    // Emit to callback
-    if (_dataCb) {
-      ChintTelemetry snap = getTelemetry();
-      _dataCb(snap);
-    }
-
-#ifdef STATUS_LED_PIN
-    digitalWrite(STATUS_LED_PIN, HIGH);
-#endif
   } else {
     portENTER_CRITICAL(&_spinlock);
     if (respLen == 0) {
@@ -281,40 +277,38 @@ void DDSU666Master::loop() {
     } else {
       _stats.crc_errors++;
     }
-    // If consecutive timeouts exceed 2 seconds, mark meter offline
-    if (millis() - _telemetry.last_update > 2000) {
+    if (now - _telemetry.last_update > 2000) {
       _stats.meter_online = false;
-      // If we haven't seen a response in 5 seconds, try toggling slave ID between 1 and 2 to auto-detect
-      static uint32_t lastToggle = 0;
-      if (millis() - lastToggle > 5000) {
-        lastToggle = millis();
-        uint8_t nextId = (_slaveId == 2) ? 1 : 2;
-        _slaveId = nextId;
-        _stats.slave_id = nextId;
-      }
     }
     portEXIT_CRITICAL(&_spinlock);
   }
 
-  // 2. Periodic Energy Accumulator Query (0x4000, 12 registers)
-  uint32_t now = millis();
+  // 2. Periodic Chint Energy Accumulator Query (0x4000, 12 registers)
   if (now - _lastEnergyPoll >= ENERGY_POLL_INTERVAL_MS) {
     _lastEnergyPoll = now;
     delay(MODBUS_INTER_FRAME_DELAY_MS);
 
     size_t energyLen = 0;
     float energyLatency = 0.0f;
-    // 0x4000: Total Import Energy (kWh), 0x400A: Total Export Energy (kWh)
     if (queryRegisters(0x4000, 12, buffer, energyLen, energyLatency) && energyLen >= 29) {
       const uint8_t *data = &buffer[3];
       float imp_kwh = parseIEEE754(&data[0]);  // 0x4000
-      float exp_kwh = parseIEEE754(&data[20]); // 0x400A (offset 10 registers = 20 bytes)
-
+      float exp_kwh = parseIEEE754(&data[20]); // 0x400A
       portENTER_CRITICAL(&_spinlock);
       if (!std::isnan(imp_kwh) && imp_kwh >= 0.0f) _telemetry.import_kwh = imp_kwh;
       if (!std::isnan(exp_kwh) && exp_kwh >= 0.0f) _telemetry.export_kwh = exp_kwh;
       portEXIT_CRITICAL(&_spinlock);
     }
+  }
+
+#ifdef STATUS_LED_PIN
+  digitalWrite(STATUS_LED_PIN, HIGH);
+#endif
+
+  // Emit fresh telemetry snapshot to queue/callback
+  if (_dataCb) {
+    ChintTelemetry snap = getTelemetry();
+    _dataCb(snap);
   }
 
   // Calculate rolling polling rate in Hz (every 1 second)

@@ -7,8 +7,19 @@
 #endif
 
 // ================================================================
-// HARDWARE PINOUT - Seeed Studio XIAO ESP32-S3 + RS485 Module
+// HARDWARE PINOUT
 // ================================================================
+#if defined(BOARD_LILYGO_TCAN485)
+// LILYGO T-CAN485 (ESP32)
+// TX = GPIO22, RX = GPIO21, DE/RE = GPIO17, 5V_EN = GPIO16, CHIP_EN = GPIO19
+#define PIN_RS485_TX          22
+#define PIN_RS485_RX          21
+#define PIN_RS485_DE_RE       17
+#define PIN_RS485_5V_EN       16
+#define PIN_RS485_CHIP_EN     19
+#define HAS_RS485_POWER_PINS  1
+#else
+// Seeed Studio XIAO ESP32-S3 + RS485 Module
 // D4 = GPIO5 (UART1 TX)
 // D5 = GPIO6 (UART1 RX)
 // D2 = GPIO3 (RS485 Direction Control DE / !RE)
@@ -17,6 +28,8 @@
 #define PIN_RS485_RX          6
 #define PIN_RS485_DE_RE       3
 #define STATUS_LED_PIN        21
+#define HAS_RS485_POWER_PINS  0
+#endif
 
 // ================================================================
 // CHINT DDSU666 MODBUS RTU CONFIGURATION
@@ -31,6 +44,7 @@
 #define MODBUS_INTER_FRAME_DELAY_MS  8       // Turnaround silence between queries
 #define MODBUS_TIMEOUT_MS            120     // Response timeout before retry
 #define ENERGY_POLL_INTERVAL_MS      30000   // Poll energy accumulators (0x4000) every 30s
+
 
 // ================================================================
 // WEBSOCKET SERVER CONFIGURATION

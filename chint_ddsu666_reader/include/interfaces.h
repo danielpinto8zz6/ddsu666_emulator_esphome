@@ -18,6 +18,7 @@ public:
   virtual void setSlaveId(uint8_t slaveId) = 0;
   virtual uint8_t getSlaveId() const = 0;
 
+
   typedef void (*OnDataCallback)(const ChintTelemetry &data);
   virtual void onData(OnDataCallback cb) = 0;
 };

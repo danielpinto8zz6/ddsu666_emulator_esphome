@@ -91,6 +91,9 @@ static void buildHealthDoc(JsonDocument &doc) {
   modbus["age_grid_sec"] = (gridModbusAge >= 0) ? round1(gridModbusAge) : -1.0f;
   modbus["age_pv_sec"] = (pvModbusAge >= 0) ? round1(pvModbusAge) : -1.0f;
   modbus["inverter_connected"] = inverterConnected;
+  modbus["eastron_online"] = s_modbus ? s_modbus->isEastronOnline() : false;
+  modbus["eastron_watts"] = s_modbus ? round1(s_modbus->getEastronWatts()) : 0.0f;
+  modbus["eastron_id"] = s_modbus ? s_modbus->getEastronSlaveId() : 3;
 
   JsonObject gridObj = doc.createNestedObject("grid");
   gridObj["source"] = source;
@@ -188,7 +191,7 @@ void initWebServer(ModbusRTUServer &modbus, TelemetryManager &telemetry) {
   s_server.on("/api/pv_priority", HTTP_ANY, []() {
     if (s_server.hasArg("mode")) {
       uint8_t mode = (uint8_t)s_server.arg("mode").toInt();
-      if (mode <= 3 && s_telemetry) {
+      if (mode <= (uint8_t)PV_PRI_FAKE_50W && s_telemetry) {
         s_telemetry->setPvPriority((PvPriorityMode)mode);
         s_server.sendHeader("Access-Control-Allow-Origin", "*");
         s_server.send(200, "application/json", "{\"status\":\"OK\",\"mode\":" + String(mode) + ",\"desc\":\"" + s_telemetry->getPvPriorityDescription() + "\"}");

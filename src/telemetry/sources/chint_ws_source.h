@@ -10,7 +10,7 @@
  */
 class ChintWsSource : public ITelemetrySource {
 public:
-  ChintWsSource(const String &ip = "10.0.0.197", uint16_t port = 81, const char *path = "/");
+  ChintWsSource(const String &ip = "10.0.0.110", uint16_t port = 81, const char *path = "/");
 
   const char* getId() const override { return "CHINT_WS"; }
   const char* getName() const override { return "Chint DDSU666 Master (WebSocket)"; }
@@ -25,6 +25,11 @@ public:
   void setIp(const String &ip);
 
   bool isGridSource() const override { return true; }
+  bool isPvSource() const override { return true; }
+  bool isPvRecent(uint32_t timeoutMs = 5000) const override {
+    return (_lastPvMsgTime != 0) && (millis() - _lastPvMsgTime <= timeoutMs);
+  }
+  uint32_t getLastPvMessageTime() const override { return _lastPvMsgTime; }
 
   const char* getHealthKey() const override { return "chint"; }
   void populateHealth(JsonObject &obj) const override;
@@ -37,6 +42,7 @@ private:
   ITelemetrySink *_sink = nullptr;
   bool _connected = false;
   uint32_t _lastMsgTime = 0;
+  uint32_t _lastPvMsgTime = 0;
 
   void onWsEvent(WStype_t type, uint8_t *payload, size_t length);
   void handleMessage(const uint8_t *payload, size_t length);

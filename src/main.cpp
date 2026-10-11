@@ -80,6 +80,7 @@ void networkTask(void *param) {
   s_telemetryManager.registerSource(&s_shellySource);
   s_telemetryManager.registerSource(&s_opendtuSource);
 
+  s_modbusServer.setTelemetrySink(&s_telemetryManager);
   s_telemetryManager.begin();
 
   while (true) {

@@ -345,8 +345,11 @@
           <div style="font-size: 0.75rem; color: var(--pico-muted-color);">Solar telemetry provider</div>
         </div>
         <select x-model.number="pvPriorityMode" @change="setPvPriority($event.target.value)" style="width: auto; max-width: 220px; font-size: 0.8rem; padding: 0.25rem 0.5rem;">
-          <option value="0">OpenDTU MQTT (Default)</option>
-          <option value="1">Disabled / Standby</option>
+          <option value="0">Auto: Eastron &rarr; OpenDTU</option>
+          <option value="1">Eastron SDM120 Only</option>
+          <option value="2">OpenDTU MQTT Only</option>
+          <option value="3">Disabled / Standby</option>
+          <option value="4">Fake 50W (Simulated)</option>
         </select>
       </div>
 
@@ -375,6 +378,10 @@
       <div class="status-row">
         <span>Shelly Pro EM (Fallback WS)</span>
         <span class="badge" :class="shellyBadgeClass" x-text="shellyBadgeText"></span>
+      </div>
+      <div class="status-row">
+        <span>PV Meter (Eastron SDM120)</span>
+        <span class="badge" :class="eastronBadgeClass" x-text="eastronBadgeText"></span>
       </div>
       <div class="status-row">
         <span>PV Solar (OpenDTU MQTT)</span>
@@ -418,6 +425,8 @@
     </template>
   </article>
 
+
+
   <!-- Tab 2: Network & Connection Settings -->
   <article x-show="activeTab === 'settings'" x-init="$watch('activeTab', tab => { if (tab === 'settings') loadConfig(); })">
     <div class="card-heading">⚙️ Network &amp; Connection Settings</div>
@@ -437,8 +446,8 @@
 
     <div class="grid">
       <label>
-        Chint XIAO IP
-        <input type="text" x-model="config.chint_ip" placeholder="10.0.0.197" autocomplete="off">
+        Chint Master IP
+        <input type="text" x-model="config.chint_ip" placeholder="10.0.0.110" autocomplete="off">
       </label>
       <label>
         Shelly Pro EM IP
@@ -635,12 +644,27 @@
           return "NONE";
         },
         get pvSourceBadgeClass() {
+          if (this.pv.source === "EASTRON_WS") return "badge-ok";
           if (this.pv.source === "OPENDTU_MQTT") return "badge-ok";
+          if (this.pv.source === "FAKE_50W") return "badge-warn";
           return "badge-err";
         },
         get pvSourceBadgeText() {
+          if (this.pv.source === "EASTRON_WS") return "⚡ Eastron SDM120";
           if (this.pv.source === "OPENDTU_MQTT") return "📡 OpenDTU MQTT";
+          if (this.pv.source === "FAKE_50W") return "⚡ Fake 50W (Simulated)";
           return "NONE";
+        },
+        get eastronBadgeClass() {
+          if (this.chint && this.chint.pv_recent) return "badge-ok";
+          return "badge-muted";
+        },
+        get eastronBadgeText() {
+          if (this.chint && this.chint.pv_recent) {
+            const age = (this.chint.pv_age_sec !== undefined && this.chint.pv_age_sec >= 0) ? ` (${this.chint.pv_age_sec.toFixed(1)}s)` : "";
+            return `ONLINE${age}`;
+          }
+          return "STANDBY / OFFLINE";
         },
         get chintBadgeClass() {
           if (this.chint.ws_connected && this.chint.age_sec >= 0 && this.chint.age_sec < 5) return "badge-ok";
@@ -774,6 +798,7 @@
             `PV Power: ${this.pv.watts.toFixed(1)} W | Yield: ${this.pv.yield_kwh.toFixed(2)} kWh`,
             `Active Sources: Grid=${this.grid.source} | PV=${this.pv.source}`,
             `Chint WS: ${this.chintBadgeText}`,
+            `Eastron SDM120: ${this.eastronBadgeText}`,
             `Shelly WS: ${this.shellyBadgeText}`,
             `OpenDTU: ${this.opendtuBadgeText}`,
             `Modbus Inverter Link: Rate=${this.modbus.rate_hz.toFixed(1)} Hz | Queries=${this.modbus.queries} | CRC Errors=${this.modbus.crc_errors}`,

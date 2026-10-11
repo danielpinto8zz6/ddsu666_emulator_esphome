@@ -42,6 +42,7 @@ private:
   uint32_t _queriesAtLastCalc;
 
   // Modbus RTU Low-Level helpers
+  bool queryModbus(uint8_t slaveId, uint8_t fc, uint16_t startAddress, uint16_t count, uint8_t *responseBuffer, size_t &responseLen, float &latencyMs);
   bool queryRegisters(uint16_t startAddress, uint16_t count, uint8_t *responseBuffer, size_t &responseLen, float &latencyMs);
   uint16_t calculateCRC(const uint8_t *buffer, size_t length);
   float parseIEEE754(const uint8_t *p);

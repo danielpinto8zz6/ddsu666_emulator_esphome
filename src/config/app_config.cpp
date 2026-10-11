@@ -25,7 +25,7 @@ void AppConfig::begin() {
     _settings.ota_password  = prefs.getString("ota_pass",   OTA_PASSWORD);
     _settings.grid_priority = prefs.getUChar("grid_pri",    (uint8_t)DEFAULT_GRID_PRIORITY_MODE);
     _settings.pv_priority   = prefs.getUChar("pv_pri",      (uint8_t)DEFAULT_PV_PRIORITY_MODE);
-    if (_settings.pv_priority > (uint8_t)PV_PRI_DISABLED) {
+    if (_settings.pv_priority > (uint8_t)PV_PRI_FAKE_50W) {
       _settings.pv_priority = (uint8_t)DEFAULT_PV_PRIORITY_MODE;
       prefs.putUChar("pv_pri", _settings.pv_priority);
     }

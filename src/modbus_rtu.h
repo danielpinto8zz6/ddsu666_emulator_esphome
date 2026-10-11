@@ -30,9 +30,17 @@ public:
   // Fast Table-Based CRC16 calculation for Modbus (polynomial 0xA001)
   static uint16_t calculateCRC(const uint8_t *buffer, size_t length);
 
+  // Eastron SDM120 Gap Polling
+  void setTelemetrySink(void *sink) { _telemetrySink = sink; }
+  bool isEastronOnline() const { return _eastronOnline; }
+  float getEastronWatts() const { return _eastronWatts; }
+  uint8_t getEastronSlaveId() const { return _eastronSlaveId; }
+  void setEastronSlaveId(uint8_t id) { _eastronSlaveId = id; }
+
 private:
   IMeterDataProvider *_dataProvider;
   MeterStateDataProvider _defaultDataProvider;
+  void *_telemetrySink = nullptr;
 
   QueueHandle_t _uartQueue;
   bool _enabled;
@@ -50,8 +58,16 @@ private:
   uint32_t _queriesAtLastCalc;
   float _queryRateHz;
 
+  // Eastron State & Timing
+  uint8_t _eastronSlaveId = 3;
+  bool _eastronOnline = false;
+  float _eastronWatts = 0.0f;
+  uint32_t _eastronLastPoll = 0;
+  uint32_t _eastronLastUpdate = 0;
+
   void processFrame(const uint8_t *frame, size_t length);
   bool getRegisterValue(uint8_t slaveId, uint16_t regAddress, const MeterTelemetry &telemetry, uint16_t &value) const;
   void sendResponse(const uint8_t *response, size_t length);
   void sendException(uint8_t slaveId, uint8_t functionCode, uint8_t exceptionCode);
+  void pollEastronGap();
 };
