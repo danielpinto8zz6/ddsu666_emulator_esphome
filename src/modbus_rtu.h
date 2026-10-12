@@ -58,16 +58,13 @@ private:
   uint32_t _queriesAtLastCalc;
   float _queryRateHz;
 
-  // Eastron State & Timing
+  // Eastron State (Legacy / Diagnostic)
   uint8_t _eastronSlaveId = 3;
   bool _eastronOnline = false;
   float _eastronWatts = 0.0f;
-  uint32_t _eastronLastPoll = 0;
-  uint32_t _eastronLastUpdate = 0;
 
   void processFrame(const uint8_t *frame, size_t length);
   bool getRegisterValue(uint8_t slaveId, uint16_t regAddress, const MeterTelemetry &telemetry, uint16_t &value) const;
   void sendResponse(const uint8_t *response, size_t length);
   void sendException(uint8_t slaveId, uint8_t functionCode, uint8_t exceptionCode);
-  void pollEastronGap();
 };

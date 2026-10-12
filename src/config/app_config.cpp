@@ -6,6 +6,21 @@ static bool isValidIpAddress(const String &str) {
   return ip.fromString(str);
 }
 
+static bool isValidHostOrIp(const String &str) {
+  if (str.isEmpty()) return false;
+  IPAddress ip;
+  if (ip.fromString(str)) return true;
+  // Valid hostname / mDNS name (at least 3 chars, contains valid characters)
+  if (str.length() >= 3 && str.length() <= 64) {
+    for (size_t i = 0; i < str.length(); ++i) {
+      char c = str[i];
+      if (!isalnum(c) && c != '-' && c != '.' && c != '_') return false;
+    }
+    return true;
+  }
+  return false;
+}
+
 AppConfig& AppConfig::getInstance() {
   static AppConfig instance;
   return instance;
@@ -81,8 +96,8 @@ bool AppConfig::save(const SystemSettings &newSettings) {
     changed = true;
   }
 
-  // Type-safe IPv4 validation for Chint and Shelly target IP addresses
-  if (isValidIpAddress(newSettings.chint_ip) && newSettings.chint_ip != _settings.chint_ip) {
+  // Type-safe Host/IPv4 validation for Chint and Shelly target addresses
+  if (isValidHostOrIp(newSettings.chint_ip) && newSettings.chint_ip != _settings.chint_ip) {
     prefs.putString("chint_ip", newSettings.chint_ip);
     _settings.chint_ip = newSettings.chint_ip;
     changed = true;

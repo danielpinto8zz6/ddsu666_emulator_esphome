@@ -2,13 +2,20 @@
 # ==============================================================================
 # One-Click Over-The-Air (OTA) Firmware Flasher for DDSU666 Emulator Ecosystem
 # Supports:
-#   - Lilygo T-CAN485 (ESP32)
-#   - Waveshare ESP32-S3 RS485/CAN
-#   - Seeed Studio XIAO ESP32-S3 (Emulator)
-#   - Seeed Studio XIAO ESP32-S3 (Chint DDSU666 Reader)
+#   - Seeed Studio XIAO ESP32-S3 (Modbus Emulator - Target Board)
+#   - LILYGO T-CAN485 ESP32 (Chint DDSU666 Master Transmitter - Target Board)
+#   - Seeed Studio XIAO ESP32-S3 (Chint DDSU666 Master alternative)
+#   - LILYGO T-CAN485 ESP32 (Modbus Emulator alternative)
+#   - Waveshare ESP32-S3 RS485/CAN (Modbus Emulator alternative)
+#   - LILYGO T-CAN485 (Dedicated Eastron SDM120 Programmer utility)
 # ==============================================================================
 
 set -euo pipefail
+
+# Ensure script runs from the repository root regardless of where it is invoked
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+cd "${PROJECT_ROOT}"
 
 # Colors
 GREEN='\033[0;32m'
@@ -18,54 +25,79 @@ RED='\033[0;31m'
 NC='\033[0m' # No Color
 
 usage() {
-    echo -e "${CYAN}Usage:${NC} $0 <target> <device_ip> [--build]"
+    echo -e "${CYAN}Usage:${NC} $0 <target> [device_ip_or_host] [--build]"
     echo ""
-    echo -e "${CYAN}Targets:${NC}"
-    echo "  lilygo      LILYGO T-CAN485 (ESP32)"
-    echo "  waveshare   Waveshare ESP32-S3 RS485"
-    echo "  xiao        Seeed Studio XIAO ESP32-S3 RS485"
-    echo "  chint-reader Seeed Studio XIAO ESP32-S3 Chint Master (WS Server)"
+    echo -e "${CYAN}Primary Ecosystem Devices:${NC}"
+    echo "  emulator          Seeed Studio XIAO ESP32-S3 (Modbus Emulator, default: ddsu666.local)"
+    echo "  transmitter       LILYGO T-CAN485 ESP32 (Chint DDSU666 Master, default: chint-reader.local)"
+    echo ""
+    echo -e "${CYAN}All Available Targets:${NC}"
+    echo "  emulator | xiao           XIAO ESP32-S3 Modbus Emulator (xiao-esp32-s3)"
+    echo "  transmitter | chint-reader LILYGO T-CAN485 Chint Master (chint-reader-lilygo-tcan485)"
+    echo "  chint-reader-xiao         XIAO ESP32-S3 Chint Master (chint-reader-xiao-s3)"
+    echo "  emulator-lilygo | lilygo  LILYGO T-CAN485 Emulator (lilygo-t-can485)"
+    echo "  emulator-waveshare        Waveshare ESP32-S3 Emulator (waveshare-esp32-s3)"
+    echo "  eastron-programmer        LILYGO T-CAN485 Eastron Programmer (eastron-programmer-tcan485)"
     echo ""
     echo -e "${CYAN}Options:${NC}"
-    echo "  --build     Force re-compile with PlatformIO before uploading"
+    echo "  --build                   Force re-compile with PlatformIO before uploading"
     echo ""
     echo -e "${CYAN}Examples:${NC}"
-    echo "  $0 lilygo 10.0.0.110"
-    echo "  $0 xiao 10.0.0.115 --build"
-    echo "  $0 chint-reader 10.0.0.197 --build"
-    echo "  $0 waveshare 10.0.0.110"
+    echo "  $0 emulator --build                   # Compile & flash emulator at ddsu666.local"
+    echo "  $0 transmitter --build                # Compile & flash transmitter at chint-reader.local"
+    echo "  $0 emulator 10.0.0.169                # Flash emulator directly via IP"
+    echo "  $0 transmitter 10.0.0.110 --build     # Compile & flash transmitter via IP"
     exit 1
 }
 
-if [[ $# -lt 2 ]]; then
+if [[ $# -lt 1 ]]; then
     usage
 fi
 
 TARGET="$1"
-DEVICE_IP="$2"
+DEVICE_IP=""
 DO_BUILD=false
 
-if [[ "${3:-}" == "--build" ]]; then
-    DO_BUILD=true
-fi
+# Parse second and third arguments flexibly
+for arg in "${@:2}"; do
+    if [[ "$arg" == "--build" ]]; then
+        DO_BUILD=true
+    elif [[ -z "$DEVICE_IP" ]]; then
+        DEVICE_IP="$arg"
+    fi
+done
 
-# Resolve environment name and binary path
+# Resolve environment name, default hostname, and binary path
 case "$TARGET" in
-    lilygo|tcan485)
-        ENV_NAME="lilygo-t-can485"
-        BIN_PATH=".pio/build/lilygo-t-can485/firmware.bin"
-        ;;
-    waveshare|s3)
-        ENV_NAME="waveshare-esp32-s3"
-        BIN_PATH=".pio/build/waveshare-esp32-s3/firmware.bin"
-        ;;
-    xiao|seeed_xiao|xiao-s3)
+    emulator|xiao|xiao-s3|seeed_xiao)
         ENV_NAME="xiao-esp32-s3"
+        DEFAULT_HOST="ddsu666.local"
         BIN_PATH=".pio/build/xiao-esp32-s3/firmware.bin"
         ;;
-    chint-reader|chint|ddsu666-reader)
+    transmitter|chint-reader|chint|lilygo-reader|reader)
+        ENV_NAME="chint-reader-lilygo-tcan485"
+        DEFAULT_HOST="chint-reader.local"
+        BIN_PATH=".pio/build/chint-reader-lilygo-tcan485/firmware.bin"
+        ;;
+    chint-reader-xiao)
         ENV_NAME="chint-reader-xiao-s3"
+        DEFAULT_HOST="chint-reader.local"
         BIN_PATH=".pio/build/chint-reader-xiao-s3/firmware.bin"
+        ;;
+    emulator-lilygo|lilygo|tcan485)
+        ENV_NAME="lilygo-t-can485"
+        DEFAULT_HOST="ddsu666.local"
+        BIN_PATH=".pio/build/lilygo-t-can485/firmware.bin"
+        ;;
+    emulator-waveshare|waveshare|s3)
+        ENV_NAME="waveshare-esp32-s3"
+        DEFAULT_HOST="ddsu666.local"
+        BIN_PATH=".pio/build/waveshare-esp32-s3/firmware.bin"
+        ;;
+    eastron-programmer|programmer)
+        ENV_NAME="eastron-programmer-tcan485"
+        DEFAULT_HOST="10.0.0.110"
+        BIN_PATH=".pio/build/eastron-programmer-tcan485/firmware.bin"
         ;;
     *)
         echo -e "${RED}Error: Unknown target '$TARGET'${NC}"
@@ -73,6 +105,10 @@ case "$TARGET" in
         ;;
 esac
 
+# Fallback to default hostname if not explicitly provided
+if [[ -z "$DEVICE_IP" ]]; then
+    DEVICE_IP="$DEFAULT_HOST"
+fi
 
 # Locate PlatformIO executable
 PIO_BIN="pio"
@@ -93,8 +129,8 @@ if [[ ! -f "$BIN_PATH" ]]; then
     exit 1
 fi
 
-# Resolve OTA Password (default empty / passwordless)
-OTA_PASS=""
+# Resolve OTA Password (default to "admin" which matches firmware defaults)
+OTA_PASS="admin"
 if [[ -f "include/secrets.h" ]]; then
     EXTRACTED_PASS=$(grep -E '^\s*#define\s+OTA_PASSWORD\s+' include/secrets.h | head -n1 | sed -E 's/.*"([^"]*)".*/\1/' || true)
     if [[ -n "$EXTRACTED_PASS" ]]; then
@@ -104,20 +140,14 @@ fi
 OTA_PASS="${OTA_PASSWORD:-$OTA_PASS}"
 
 BIN_SIZE=$(wc -c < "$BIN_PATH")
-echo -e "${CYAN}==> Target:${NC}    ${ENV_NAME}"
-echo -e "${CYAN}==> Device IP:${NC} ${DEVICE_IP}"
-echo -e "${CYAN}==> Binary:${NC}    ${BIN_PATH} (${BIN_SIZE} bytes)"
-if [[ -n "$OTA_PASS" ]]; then
-    echo -e "${CYAN}==> Uploading OTA firmware to http://${DEVICE_IP}/update (authenticated)...${NC}"
-else
-    echo -e "${CYAN}==> Uploading OTA firmware to http://${DEVICE_IP}/update (passwordless)...${NC}"
-fi
+echo -e "${CYAN}==> Target:${NC}      ${ENV_NAME}"
+echo -e "${CYAN}==> Device Host:${NC} ${DEVICE_IP}"
+echo -e "${CYAN}==> Binary:${NC}      ${BIN_PATH} (${BIN_SIZE} bytes)"
+echo -e "${CYAN}==> Uploading OTA firmware to http://${DEVICE_IP}/update...${NC}"
 
-# Perform OTA upload with curl (Expect: header is mandatory to prevent 100-continue stalls)
-AUTH_ARGS=()
-if [[ -n "$OTA_PASS" ]]; then
-    AUTH_ARGS=(-u "admin:${OTA_PASS}" -H "X-OTA-Password: ${OTA_PASS}")
-fi
+# Perform OTA upload with curl
+# Expect: header is mandatory to prevent 100-continue stalls on ESP32 WebServer
+AUTH_ARGS=(-u "admin:${OTA_PASS}" -H "X-OTA-Password: ${OTA_PASS}")
 
 HTTP_CODE=$(curl -s -o /tmp/ota_response.txt -w "%{http_code}" \
     "${AUTH_ARGS[@]}" \
@@ -125,7 +155,7 @@ HTTP_CODE=$(curl -s -o /tmp/ota_response.txt -w "%{http_code}" \
     -H "Expect:" \
     --connect-timeout 15 \
     --max-time 180 \
-    "http://${DEVICE_IP}/update")
+    "http://${DEVICE_IP}/update?password=${OTA_PASS}")
 
 RESPONSE=$(cat /tmp/ota_response.txt 2>/dev/null || echo "")
 
@@ -133,10 +163,10 @@ if [[ "$HTTP_CODE" == "200" ]] && [[ "$RESPONSE" == *"OK"* ]]; then
     echo -e "${GREEN}✔ OTA Flash Successful!${NC} Device is rebooting into the new firmware."
     echo -e "${YELLOW}ℹ Waiting 5 seconds for reboot...${NC}"
     sleep 5
-    if curl -s --connect-timeout 3 "http://${DEVICE_IP}/health" >/dev/null 2>&1; then
+    if curl -s --connect-timeout 4 "http://${DEVICE_IP}/health" >/dev/null 2>&1; then
         echo -e "${GREEN}✔ Device is back online!${NC} (http://${DEVICE_IP}/health)"
     else
-        echo -e "${YELLOW}ℹ Device is rebooting. Check http://${DEVICE_IP}/ in a few seconds.${NC}"
+        echo -e "${YELLOW}ℹ Device is rebooting. Check http://${DEVICE_IP}/ in a few moments.${NC}"
     fi
 else
     echo -e "${RED}✘ OTA Flash Failed! (HTTP Status: ${HTTP_CODE})${NC}"

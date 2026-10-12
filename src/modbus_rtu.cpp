@@ -280,9 +280,6 @@ void ModbusRTUServer::processFrame(const uint8_t *frame, size_t length) {
     _lastPvQueryTime = _lastQueryTime;
   }
   sendResponse(response, respIdx);
-
-  // Poll Eastron SDM120 during the bus silence gap following a Hoymiles frame
-  pollEastronGap();
 }
 
 float ModbusRTUServer::getQueryRateHz() {
@@ -323,73 +320,5 @@ void ModbusRTUServer::sendException(uint8_t slaveId, uint8_t functionCode, uint8
   response[4] = (uint8_t)((crc >> 8) & 0xFF);
 
   sendResponse(response, sizeof(response));
-}
-
-void ModbusRTUServer::pollEastronGap() {
-  uint32_t now = millis();
-  if (now - _eastronLastPoll < 1000) return; // 1 Hz cadence
-  _eastronLastPoll = now;
-
-  // Inter-frame silence before sending query to Eastron
-  delayMicroseconds(500);
-
-  // Modbus FC 0x04 Read Input Registers (0x000C, 2 registers)
-  uint8_t q[8];
-  q[0] = _eastronSlaveId;
-  q[1] = 0x04;
-  q[2] = 0x00; q[3] = 0x0C;
-  q[4] = 0x00; q[5] = 0x02;
-  uint16_t crc = calculateCRC(q, 6);
-  q[6] = crc & 0xFF;
-  q[7] = (crc >> 8) & 0xFF;
-
-  digitalWrite(PIN_RS485_DE_RE, HIGH);
-  delayMicroseconds(25);
-  uart_write_bytes(UART_NUM_1, (const char*)q, 8);
-  uart_wait_tx_done(UART_NUM_1, pdMS_TO_TICKS(15));
-  delayMicroseconds(25);
-  digitalWrite(PIN_RS485_DE_RE, LOW);
-
-  // Wait up to 25ms for 9-byte response
-  uint8_t resp[16];
-  int n = 0;
-  uint32_t t0 = millis();
-  while (millis() - t0 < 25 && n < 9) {
-    size_t avail = 0;
-    uart_get_buffered_data_len(UART_NUM_1, &avail);
-    if (avail > 0) {
-      int r = uart_read_bytes(UART_NUM_1, resp + n, avail, pdMS_TO_TICKS(4));
-      if (r > 0) n += r;
-    }
-    vTaskDelay(pdMS_TO_TICKS(1));
-  }
-
-  if (n >= 9 && resp[0] == _eastronSlaveId && resp[1] == 0x04) {
-    uint16_t rcrc = ((uint16_t)resp[8] << 8) | resp[7];
-    if (calculateCRC(resp, 7) == rcrc) {
-      uint32_t raw = ((uint32_t)resp[3] << 24) | ((uint32_t)resp[4] << 16) | ((uint32_t)resp[5] << 8) | resp[6];
-      float watts;
-      memcpy(&watts, &raw, 4);
-      if (!std::isnan(watts)) {
-        float absWatts = fabsf(watts);
-        _eastronWatts = absWatts;
-        _eastronLastUpdate = now;
-        _eastronOnline = true;
-        if (_telemetrySink) {
-          ITelemetrySink *sink = static_cast<ITelemetrySink*>(_telemetrySink);
-          PvMeasurement pvMeas;
-          pvMeas.active_power_w = absWatts;
-          pvMeas.yield_kwh = -1.0f;
-          sink->reportPvMeasurement("EASTRON_LOCAL", pvMeas);
-        } else {
-          MeterState::updatePvPower(absWatts);
-        }
-      }
-    }
-  } else {
-    if (now - _eastronLastUpdate > 5000) {
-      _eastronOnline = false;
-    }
-  }
 }
 

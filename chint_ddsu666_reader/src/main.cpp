@@ -71,6 +71,7 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.setHostname("chint-reader");
   WiFi.setAutoReconnect(true);
+  WiFi.setSleep(false); // Disable modem sleep for low-latency (<3ms) WebSocket streaming
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.printf("[WiFi] Connecting to %s", WIFI_SSID);
   unsigned long start = millis();

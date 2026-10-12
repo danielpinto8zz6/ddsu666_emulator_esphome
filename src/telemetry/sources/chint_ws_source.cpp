@@ -1,31 +1,109 @@
 #include "chint_ws_source.h"
+#include <WiFi.h>
 
 ChintWsSource::ChintWsSource(const String &ip, uint16_t port, const char *path)
-  : _ip(ip), _port(port), _path(path) {
+  : _configuredHost(ip), _activeIp(""), _port(port), _path(path) {
+}
+
+bool ChintWsSource::resolveHost(const String &host, String &outIp) {
+  String target = host;
+  if (target.isEmpty()) target = "chint-reader";
+
+  // If host is already an IPv4 address, use it directly
+  IPAddress parsedIp;
+  if (parsedIp.fromString(target)) {
+    outIp = target;
+    return true;
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    return false;
+  }
+
+  // Handle mDNS names (.local or plain hostname)
+  String hostname = target;
+  if (hostname.endsWith(".local")) {
+    hostname = hostname.substring(0, hostname.length() - 6);
+  }
+
+  IPAddress resolved = MDNS.queryHost(hostname.c_str(), 1000);
+  if (resolved != INADDR_NONE && resolved != IPAddress(0, 0, 0, 0)) {
+    outIp = resolved.toString();
+    return true;
+  }
+  return false;
+}
+
+void ChintWsSource::connect() {
+  String ipToUse;
+  if (resolveHost(_configuredHost, ipToUse)) {
+    _activeIp = ipToUse;
+  } else {
+    IPAddress testIp;
+    if (testIp.fromString(_configuredHost)) {
+      _activeIp = _configuredHost;
+    } else {
+      _activeIp = "10.0.0.110"; // Fallback to default transmitter IP while mDNS resolves
+    }
+  }
+
+  Serial.printf("[Chint WS] Connecting to ws://%s:%d%s (configured: %s)\n",
+                _activeIp.c_str(), _port, _path, _configuredHost.c_str());
+  _ws.begin(_activeIp.c_str(), _port, _path);
 }
 
 void ChintWsSource::begin(ITelemetrySink *sink) {
   _sink = sink;
-  Serial.printf("[Chint WS] Initializing connection to ws://%s:%d%s\n", _ip.c_str(), _port, _path);
-  _ws.begin(_ip.c_str(), _port, _path);
   _ws.onEvent([this](WStype_t type, uint8_t *payload, size_t length) {
     this->onWsEvent(type, payload, length);
   });
   _ws.setReconnectInterval(2000);
   _ws.enableHeartbeat(5000, 2000, 2);
+
+  connect();
 }
 
 void ChintWsSource::setIp(const String &ip) {
-  if (_ip != ip) {
-    _ip = ip;
+  if (_configuredHost != ip) {
+    _configuredHost = ip;
     _connected = false;
     _ws.disconnect();
-    _ws.begin(_ip.c_str(), _port, _path);
+    connect();
   }
 }
 
 void ChintWsSource::loop() {
   _ws.loop();
+
+  // If disconnected, periodically attempt mDNS discovery every 5 seconds
+  uint32_t now = millis();
+  if (!_connected && (now - _lastMdnsAttempt >= 5000)) {
+    _lastMdnsAttempt = now;
+
+    // Check if configured host is an mDNS name or if disconnected from static IP,
+    // probe for chint-reader on the network
+    String target = _configuredHost;
+    if (target.endsWith(".local") || target == "chint-reader" || target.isEmpty()) {
+      String resolved;
+      if (resolveHost(target, resolved) && resolved != _activeIp) {
+        Serial.printf("[Chint WS] Discovered chint-reader via mDNS at %s (was %s)\n",
+                      resolved.c_str(), _activeIp.c_str());
+        _activeIp = resolved;
+        _ws.disconnect();
+        _ws.begin(_activeIp.c_str(), _port, _path);
+      }
+    } else {
+      // If configured with an IP that is disconnected, also check if chint-reader.local is available
+      String resolved;
+      if (resolveHost("chint-reader", resolved) && resolved != _activeIp) {
+        Serial.printf("[Chint WS] Transmitter relocated via mDNS: %s -> %s\n",
+                      _activeIp.c_str(), resolved.c_str());
+        _activeIp = resolved;
+        _ws.disconnect();
+        _ws.begin(_activeIp.c_str(), _port, _path);
+      }
+    }
+  }
 }
 
 void ChintWsSource::onWsEvent(WStype_t type, uint8_t *payload, size_t length) {
@@ -37,7 +115,7 @@ void ChintWsSource::onWsEvent(WStype_t type, uint8_t *payload, size_t length) {
 
     case WStype_CONNECTED:
       _connected = true;
-      Serial.printf("[Chint WS] Connected to ws://%s:%d%s\n", _ip.c_str(), _port, _path);
+      Serial.printf("[Chint WS] Connected to ws://%s:%d%s\n", _activeIp.c_str(), _port, _path);
       break;
 
     case WStype_TEXT:
@@ -129,7 +207,8 @@ void ChintWsSource::handleMessage(const uint8_t *payload, size_t length) {
 
 void ChintWsSource::populateHealth(JsonObject &obj) const {
   obj["ws_connected"] = _connected;
-  obj["ip"] = _ip;
+  obj["ip"] = getIp();
+  obj["configured_host"] = _configuredHost;
   float age = getAgeSeconds();
   obj["age_sec"] = (age >= 0.0f) ? std::round(age * 10.0f) / 10.0f : -1.0f;
   float pvAge = (_lastPvMsgTime != 0) ? (float)(millis() - _lastPvMsgTime) / 1000.0f : -1.0f;

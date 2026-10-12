@@ -49,7 +49,7 @@ constexpr uint32_t WATCHDOG_TIMEOUT_SEC   = 10; // Fail-safe timeout in seconds 
 
 // Chint DDSU666 Master (LilyGO T-CAN485) Configuration
 #ifndef CHINT_LILYGO_IP
-#define CHINT_LILYGO_IP                   "10.0.0.110"
+#define CHINT_LILYGO_IP                   "chint-reader.local"
 #endif
 #ifndef CHINT_XIAO_IP
 #define CHINT_XIAO_IP                     CHINT_LILYGO_IP

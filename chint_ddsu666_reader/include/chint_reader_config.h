@@ -67,25 +67,4 @@
 #define OTA_PASSWORD          ""
 #endif
 
-// ================================================================
-// MQTT CONFIGURATION (Home Assistant Auto-Discovery)
-// ================================================================
-#ifndef MQTT_BROKER_IP
-#define MQTT_BROKER_IP        "10.0.0.1"
-#endif
-
-#ifndef MQTT_PORT
-#define MQTT_PORT             1883
-#endif
-
-#ifndef MQTT_USER
-#define MQTT_USER             ""
-#endif
-
-#ifndef MQTT_PASSWORD
-#define MQTT_PASSWORD         ""
-#endif
-
-#define CHINT_MQTT_CLIENT_ID  "chint-ddsu666-master"
-#define CHINT_MQTT_TOPIC      "chint_ddsu666/telemetry"
 

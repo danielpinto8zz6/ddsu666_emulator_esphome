@@ -399,7 +399,7 @@ const char CHINT_DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         flashTimer: null,
 
         get wsUrl() {
-          const host = window.location.hostname || "10.0.0.197";
+          const host = window.location.hostname || "chint-reader.local";
           return `ws://${host}:81/`;
         },
 

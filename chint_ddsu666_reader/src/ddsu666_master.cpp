@@ -284,7 +284,8 @@ void DDSU666Master::loop() {
   }
 
   // 2. Periodic Chint Energy Accumulator Query (0x4000, 12 registers)
-  if (now - _lastEnergyPoll >= ENERGY_POLL_INTERVAL_MS) {
+  // Poll immediately on first startup, then every ENERGY_POLL_INTERVAL_MS (30s)
+  if (_lastEnergyPoll == 0 || (now - _lastEnergyPoll >= ENERGY_POLL_INTERVAL_MS)) {
     _lastEnergyPoll = now;
     delay(MODBUS_INTER_FRAME_DELAY_MS);
 
